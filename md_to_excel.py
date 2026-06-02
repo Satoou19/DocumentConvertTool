@@ -8,12 +8,25 @@ Build .exe: pyinstaller --onefile --windowed --name "Document Converter" --icon=
     Lưu ý: file favicon.ico phải để cùng thư mục với md_to_excel.py trước khi chạy lệnh.
 """
 
+import sys
 import re
 import os
 import threading
 import pandas as pd
 import customtkinter as ctk
 from tkinter import filedialog
+
+# Prevent UnicodeEncodeError when printing emojis/UTF-8 characters to standard output in Windows console
+if sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='backslashreplace')
+    except AttributeError:
+        pass
+if sys.stderr is not None:
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
+    except AttributeError:
+        pass
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
