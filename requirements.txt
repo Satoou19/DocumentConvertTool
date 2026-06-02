@@ -1,0 +1,7 @@
+customtkinter
+tkinterdnd2
+pandas
+openpyxl
+python-docx
+mammoth
+pyinstaller
