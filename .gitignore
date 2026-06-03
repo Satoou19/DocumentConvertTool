@@ -7,3 +7,5 @@ __pycache__/
 test.md
 *.docx
 *.xlsx
+venv/
+agent_instructions.md
