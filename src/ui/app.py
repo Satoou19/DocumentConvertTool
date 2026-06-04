@@ -289,8 +289,27 @@ class App(BaseClass): # type: ignore
     # ── Load file on drop or browse ───────────────────────────────────────────
 
     def _on_drop(self, event):
-        path = event.data.strip().strip("{}")
-        self._load_file_to_editor(path)
+        raw_data = event.data
+        if not raw_data:
+            return
+        
+        # Parse TkinterDnD paths (handles spaces wrapped in {}, unicode, and multiple files)
+        import re
+        pattern = re.compile(r'\{([^}]+)\}|(\S+)')
+        paths = [m.group(1) or m.group(2) for m in pattern.finditer(raw_data)]
+        paths = [p for p in paths if p]
+
+        if not paths:
+            self._set_status("No valid files dropped", "orange")
+            return
+
+        # Since it is currently a single-document editor, load the first file
+        target_path = paths[0]
+        self._load_file_to_editor(target_path)
+
+        # Notify if multiple files were dropped
+        if len(paths) > 1:
+            self._set_status(f"Loaded first file. Ignored {len(paths)-1} other files.", "orange")
 
     def _browse_input(self):
         # We allow loading any supported document type to auto-detect
