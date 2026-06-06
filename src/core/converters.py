@@ -1,8 +1,8 @@
 import os
 import re
-import pandas as pd
 
-def parse_md_tables(content: str) -> list[tuple[str, pd.DataFrame]]:
+def parse_md_tables(content: str) -> list:
+    import pandas as pd
     tables, lines, i = [], content.split("\n"), 0
     while i < len(lines):
         line = lines[i].strip()
@@ -31,6 +31,7 @@ def parse_md_tables(content: str) -> list[tuple[str, pd.DataFrame]]:
 
 
 def md_to_excel_from_text(content: str, out_path: str) -> str:
+    import pandas as pd
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 

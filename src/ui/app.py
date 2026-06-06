@@ -10,6 +10,38 @@ except ImportError:
     HAS_DND = False
     print("[WARN] tkinterdnd2 not found, drag & drop disabled")
 
+# Safety checks for critical document library dependencies to prevent crashes
+try:
+    import mammoth
+    HAS_MAMMOTH = True
+except ImportError:
+    HAS_MAMMOTH = False
+
+try:
+    import openpyxl
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
+
+try:
+    import docx
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+try:
+    import pandas
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+
+MODE_DEPENDENCIES = {
+    "MD -> Excel":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
+    "MD -> Word":   [("python-docx", HAS_DOCX)],
+    "Excel -> MD":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
+    "Word -> MD":   [("mammoth", HAS_MAMMOTH)],
+}
+
 from src.core.extractors import extract_excel_to_md, extract_word_to_md
 from src.core.converters import md_to_excel_from_text, md_to_word_from_text, save_markdown_from_text
 
@@ -254,7 +286,29 @@ class App(BaseClass): # type: ignore
         else:
             self.out_path.set("")
             
-        self._set_status("Mode changed to: " + self.mode_var.get(), "gray")
+        # Validate dependencies for the selected mode
+        mode = self.mode_var.get()
+        missing = [name for name, available in MODE_DEPENDENCIES[mode] if not available]
+        
+        if missing:
+            self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
+            missing_str = ", ".join(missing)
+            self._set_status(f"Missing dependency: {missing_str}", "red")
+            
+            tooltip_msg = f"Dependency Error:\n" \
+                          f"-----------------------------------\n" \
+                          f"The selected mode '{mode}' is unavailable because the following required libraries are missing:\n" \
+                          f"- {missing_str}\n\n" \
+                          f"To enable this mode, please run the following command in your terminal:\n" \
+                          f"    pip install {' '.join(missing)}\n\n" \
+                          f"Then restart this application to apply."
+            self._write_preview(tooltip_msg)
+        else:
+            self.btn_convert.configure(state="normal", fg_color="#2ecc71", text="CONVERT & SAVE")
+            self._set_status("Mode changed to: " + mode, "gray")
+            # If the editor has no text, reset to standard greeting
+            if not self.editor.get("1.0", "end-1c").strip():
+                self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
 
     def _clear_editor(self):
         self.editor.delete("1.0", "end")
@@ -328,8 +382,51 @@ class App(BaseClass): # type: ignore
             self._set_status("Input file does not exist!", "red")
             return
 
-        self._set_status("Loading and extracting file content...", "orange")
+        # Check file size warning (>50MB) to prevent UI freezing and high memory usage
+        file_size = os.path.getsize(path)
+        if file_size > 50 * 1024 * 1024:
+            from tkinter import messagebox
+            file_size_mb = file_size / (1024 * 1024)
+            confirm = messagebox.askyesno(
+                title="Large File Warning",
+                message=f"The selected file '{os.path.basename(path)}' is very large ({file_size_mb:.1f} MB).\n\n"
+                        f"Loading large files may freeze the user interface or consume significant system memory (RAM).\n\n"
+                        f"Are you sure you want to proceed?"
+            )
+            if not confirm:
+                self._set_status("Loading cancelled", "orange")
+                self._write_preview(f"Load Cancelled:\n\nFile '{os.path.basename(path)}' ({file_size_mb:.1f} MB) was not loaded because it exceeds the 50 MB safety threshold.")
+                return
+
         ext = os.path.splitext(path)[1].lower()
+
+        # Enforce dependency validation before attempting ingestion
+        if ext == ".docx" and not HAS_MAMMOTH:
+            self._set_status("Cannot load: mammoth library missing!", "red")
+            tooltip_msg = f"Load Error:\n" \
+                          f"-----------------------------------\n" \
+                          f"The file '{os.path.basename(path)}' requires the 'mammoth' library for extraction, which is not installed.\n\n" \
+                          f"To resolve this, please install it via:\n" \
+                          f"    pip install mammoth"
+            self._write_preview(tooltip_msg)
+            return
+
+        if ext in (".xlsx", ".xls") and (not HAS_OPENPYXL or not HAS_PANDAS):
+            missing = []
+            if not HAS_PANDAS: missing.append("pandas")
+            if not HAS_OPENPYXL: missing.append("openpyxl")
+            missing_str = " and ".join(missing)
+            self._set_status(f"Cannot load: {missing_str} missing!", "red")
+            tooltip_msg = f"Load Error:\n" \
+                          f"-----------------------------------\n" \
+                          f"The file '{os.path.basename(path)}' requires the following library/libraries to be read:\n" \
+                          f"- {missing_str}\n\n" \
+                          f"To resolve this, please run:\n" \
+                          f"    pip install {' '.join(missing)}"
+            self._write_preview(tooltip_msg)
+            return
+
+        self._set_status("Loading and extracting file content...", "orange")
 
         # Update paths
         self.in_path.set(path)
@@ -404,6 +501,16 @@ class App(BaseClass): # type: ignore
         if not out:
             self._set_status("Please choose a save path!", "orange")
             return
+
+        if os.path.exists(out):
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                title="Overwrite Confirmation",
+                message=f"The file '{os.path.basename(out)}' already exists.\n\nDo you want to overwrite it?"
+            )
+            if not confirm:
+                self._set_status("Conversion cancelled", "orange")
+                return
 
         self.btn_convert.configure(state="disabled", text="Converting...")
         self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")

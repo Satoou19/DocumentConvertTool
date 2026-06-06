@@ -1,9 +1,8 @@
-import os
 import re
-import pandas as pd
 
 def extract_excel_to_md(in_path: str) -> str:
     """Extracts Excel sheets into clean Markdown tables."""
+    import pandas as pd
     xl = pd.ExcelFile(in_path)
     parts = []
     for sheet in xl.sheet_names:
