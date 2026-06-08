@@ -152,14 +152,23 @@ class App(BaseClass): # type: ignore
                 w.drop_target_register(DND_FILES) # type: ignore
                 w.dnd_bind("<<Drop>>", self._on_drop) # type: ignore
 
-        # The Live Monospace Text Editor
+        # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
             left_pane, fg_color="#111115", text_color="#f8f8f2",
             font=ctk.CTkFont(family="Consolas", size=13),
-            border_width=1, border_color="#2c2c35", corner_radius=8
+            border_width=1, border_color="#2c2c35", corner_radius=8,
+            undo=True
         )
         self.editor.grid(row=2, column=0, sticky="nsew", padx=15, pady=8)
         self.editor.bind("<KeyRelease>", self._update_counts)
+
+        # Bind custom Undo/Redo events to catch exceptions and prevent duplicate actions
+        self.editor.bind("<Control-z>", self._undo)
+        self.editor.bind("<Control-Z>", self._undo)
+        self.editor.bind("<Control-y>", self._redo)
+        self.editor.bind("<Control-Y>", self._redo)
+        self.editor.bind("<Control-Shift-z>", self._redo)
+        self.editor.bind("<Control-Shift-Z>", self._redo)
 
         # Editor Footer (Stats & Actions)
         editor_footer = ctk.CTkFrame(left_pane, fg_color="transparent")
@@ -181,6 +190,20 @@ class App(BaseClass): # type: ignore
             command=self._clear_editor
         )
         btn_clear.pack(side="right", padx=5)
+
+        btn_redo = ctk.CTkButton(
+            editor_footer, text="Redo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._redo
+        )
+        btn_redo.pack(side="right", padx=5)
+
+        btn_undo = ctk.CTkButton(
+            editor_footer, text="Undo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._undo
+        )
+        btn_undo.pack(side="right", padx=5)
 
 
         # ── RIGHT PANE: Output Configuration, Preview & Actions ───────────────
@@ -312,6 +335,7 @@ class App(BaseClass): # type: ignore
 
     def _clear_editor(self):
         self.editor.delete("1.0", "end")
+        self.editor.edit_reset()  # Reset undo stack after manual clearing
         self.in_path.set("")
         self._update_counts()
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
@@ -458,6 +482,7 @@ class App(BaseClass): # type: ignore
                     
                     self.editor.delete("1.0", "end")
                     self.editor.insert("1.0", content)
+                    self.editor.edit_reset()  # Reset undo stack after loading new document content
                     self._update_counts()
                     
                     # Generate Overview log
@@ -501,6 +526,25 @@ class App(BaseClass): # type: ignore
         if not out:
             self._set_status("Please choose a save path!", "orange")
             return
+
+        # Validate Markdown tables to prevent malformed data parsing
+        from src.core.validator import validate_md_tables
+        warnings = validate_md_tables(content)
+        if warnings:
+            from tkinter import messagebox
+            warn_msg = "The following issues were detected in your Markdown tables:\n\n" + \
+                       "\n".join(f"- {w}" for w in warnings[:10])
+            if len(warnings) > 10:
+                warn_msg += f"\n- ... and {len(warnings) - 10} more warnings."
+            warn_msg += "\n\nDo you want to proceed with the conversion anyway?"
+            
+            confirm = messagebox.askyesno(
+                title="Table Validation Warning",
+                message=warn_msg
+            )
+            if not confirm:
+                self._set_status("Conversion cancelled", "orange")
+                return
 
         if os.path.exists(out):
             from tkinter import messagebox
@@ -565,3 +609,17 @@ class App(BaseClass): # type: ignore
                 self._set_status(f"Failed to open file: {e}", "red")
         else:
             self._set_status("File does not exist or has not been created yet!", "orange")
+
+    def _undo(self, event=None):
+        try:
+            self.editor.edit_undo()
+        except Exception:
+            pass
+        return "break"
+
+    def _redo(self, event=None):
+        try:
+            self.editor.edit_redo()
+        except Exception:
+            pass
+        return "break"
