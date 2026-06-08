@@ -288,10 +288,13 @@ class App(BaseClass): # type: ignore
         )
         self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(5, 0), pady=(0, 5))
 
+        self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", height=8, progress_color="#2ecc71")
+        # Kept hidden initially until conversion begins
+
         self.status_lbl = ctk.CTkLabel(
             action_frame, text="Ready to process", font=ctk.CTkFont(family="Arial", size=12, slant="italic"), text_color="gray"
         )
-        self.status_lbl.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.status_lbl.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0))
 
     # ── Internal Actions & Event Handlers ─────────────────────────────────────
 
@@ -560,6 +563,10 @@ class App(BaseClass): # type: ignore
         self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
         self._set_status("Processing conversion and writing file...", "orange")
 
+        # Show and start progress bar
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
+        self.progress_bar.start()
+
         def task():
             try:
                 # Direct dispatcher
@@ -584,18 +591,27 @@ class App(BaseClass): # type: ignore
                               f"- New size: {os.path.getsize(out) if os.path.exists(out) else 0} bytes\n\n" \
                               f"Click the 'OPEN CREATED FILE' button below to open and view your document directly!"
 
-                self.after(0, lambda: self._write_preview(log_details))
-                self.after(0, lambda: self._set_status(msg, color))
-                
-                if color == "green":
-                    self.after(0, lambda: self.btn_open_file.configure(
-                        state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
-                    ))
+                def update_success():
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._write_preview(log_details)
+                    self._set_status(msg, color)
+                    if color == "green":
+                        self.btn_open_file.configure(
+                            state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
+                        )
+                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
+
+                self.after(0, update_success)
             except Exception as e:
-                self.after(0, lambda: self._set_status(f"Conversion error: {e}", "red"))
-                self.after(0, lambda: self._write_preview(f"Conversion error details:\n{e}"))
-            
-            self.after(0, lambda: self.btn_convert.configure(state="normal", text="CONVERT & SAVE"))
+                def update_error():
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._set_status(f"Conversion error: {e}", "red")
+                    self._write_preview(f"Conversion error details:\n{e}")
+                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
+
+                self.after(0, update_error)
 
         threading.Thread(target=task, daemon=True).start()
 
