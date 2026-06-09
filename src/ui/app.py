@@ -10,6 +10,38 @@ except ImportError:
     HAS_DND = False
     print("[WARN] tkinterdnd2 not found, drag & drop disabled")
 
+# Safety checks for critical document library dependencies to prevent crashes
+try:
+    import mammoth
+    HAS_MAMMOTH = True
+except ImportError:
+    HAS_MAMMOTH = False
+
+try:
+    import openpyxl
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
+
+try:
+    import docx
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+try:
+    import pandas
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+
+MODE_DEPENDENCIES = {
+    "MD -> Excel":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
+    "MD -> Word":   [("python-docx", HAS_DOCX)],
+    "Excel -> MD":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
+    "Word -> MD":   [("mammoth", HAS_MAMMOTH)],
+}
+
 from src.core.extractors import extract_excel_to_md, extract_word_to_md
 from src.core.converters import md_to_excel_from_text, md_to_word_from_text, save_markdown_from_text
 
@@ -120,14 +152,23 @@ class App(BaseClass): # type: ignore
                 w.drop_target_register(DND_FILES) # type: ignore
                 w.dnd_bind("<<Drop>>", self._on_drop) # type: ignore
 
-        # The Live Monospace Text Editor
+        # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
             left_pane, fg_color="#111115", text_color="#f8f8f2",
             font=ctk.CTkFont(family="Consolas", size=13),
-            border_width=1, border_color="#2c2c35", corner_radius=8
+            border_width=1, border_color="#2c2c35", corner_radius=8,
+            undo=True
         )
         self.editor.grid(row=2, column=0, sticky="nsew", padx=15, pady=8)
         self.editor.bind("<KeyRelease>", self._update_counts)
+
+        # Bind custom Undo/Redo events to catch exceptions and prevent duplicate actions
+        self.editor.bind("<Control-z>", self._undo)
+        self.editor.bind("<Control-Z>", self._undo)
+        self.editor.bind("<Control-y>", self._redo)
+        self.editor.bind("<Control-Y>", self._redo)
+        self.editor.bind("<Control-Shift-z>", self._redo)
+        self.editor.bind("<Control-Shift-Z>", self._redo)
 
         # Editor Footer (Stats & Actions)
         editor_footer = ctk.CTkFrame(left_pane, fg_color="transparent")
@@ -149,6 +190,20 @@ class App(BaseClass): # type: ignore
             command=self._clear_editor
         )
         btn_clear.pack(side="right", padx=5)
+
+        btn_redo = ctk.CTkButton(
+            editor_footer, text="Redo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._redo
+        )
+        btn_redo.pack(side="right", padx=5)
+
+        btn_undo = ctk.CTkButton(
+            editor_footer, text="Undo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._undo
+        )
+        btn_undo.pack(side="right", padx=5)
 
 
         # ── RIGHT PANE: Output Configuration, Preview & Actions ───────────────
@@ -233,10 +288,13 @@ class App(BaseClass): # type: ignore
         )
         self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(5, 0), pady=(0, 5))
 
+        self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", height=8, progress_color="#2ecc71")
+        # Kept hidden initially until conversion begins
+
         self.status_lbl = ctk.CTkLabel(
             action_frame, text="Ready to process", font=ctk.CTkFont(family="Arial", size=12, slant="italic"), text_color="gray"
         )
-        self.status_lbl.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.status_lbl.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0))
 
     # ── Internal Actions & Event Handlers ─────────────────────────────────────
 
@@ -254,10 +312,33 @@ class App(BaseClass): # type: ignore
         else:
             self.out_path.set("")
             
-        self._set_status("Mode changed to: " + self.mode_var.get(), "gray")
+        # Validate dependencies for the selected mode
+        mode = self.mode_var.get()
+        missing = [name for name, available in MODE_DEPENDENCIES[mode] if not available]
+        
+        if missing:
+            self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
+            missing_str = ", ".join(missing)
+            self._set_status(f"Missing dependency: {missing_str}", "red")
+            
+            tooltip_msg = f"Dependency Error:\n" \
+                          f"-----------------------------------\n" \
+                          f"The selected mode '{mode}' is unavailable because the following required libraries are missing:\n" \
+                          f"- {missing_str}\n\n" \
+                          f"To enable this mode, please run the following command in your terminal:\n" \
+                          f"    pip install {' '.join(missing)}\n\n" \
+                          f"Then restart this application to apply."
+            self._write_preview(tooltip_msg)
+        else:
+            self.btn_convert.configure(state="normal", fg_color="#2ecc71", text="CONVERT & SAVE")
+            self._set_status("Mode changed to: " + mode, "gray")
+            # If the editor has no text, reset to standard greeting
+            if not self.editor.get("1.0", "end-1c").strip():
+                self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
 
     def _clear_editor(self):
         self.editor.delete("1.0", "end")
+        self.editor.edit_reset()  # Reset undo stack after manual clearing
         self.in_path.set("")
         self._update_counts()
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
@@ -289,8 +370,27 @@ class App(BaseClass): # type: ignore
     # ── Load file on drop or browse ───────────────────────────────────────────
 
     def _on_drop(self, event):
-        path = event.data.strip().strip("{}")
-        self._load_file_to_editor(path)
+        raw_data = event.data
+        if not raw_data:
+            return
+        
+        # Parse TkinterDnD paths (handles spaces wrapped in {}, unicode, and multiple files)
+        import re
+        pattern = re.compile(r'\{([^}]+)\}|(\S+)')
+        paths = [m.group(1) or m.group(2) for m in pattern.finditer(raw_data)]
+        paths = [p for p in paths if p]
+
+        if not paths:
+            self._set_status("No valid files dropped", "orange")
+            return
+
+        # Since it is currently a single-document editor, load the first file
+        target_path = paths[0]
+        self._load_file_to_editor(target_path)
+
+        # Notify if multiple files were dropped
+        if len(paths) > 1:
+            self._set_status(f"Loaded first file. Ignored {len(paths)-1} other files.", "orange")
 
     def _browse_input(self):
         # We allow loading any supported document type to auto-detect
@@ -309,8 +409,51 @@ class App(BaseClass): # type: ignore
             self._set_status("Input file does not exist!", "red")
             return
 
-        self._set_status("Loading and extracting file content...", "orange")
+        # Check file size warning (>50MB) to prevent UI freezing and high memory usage
+        file_size = os.path.getsize(path)
+        if file_size > 50 * 1024 * 1024:
+            from tkinter import messagebox
+            file_size_mb = file_size / (1024 * 1024)
+            confirm = messagebox.askyesno(
+                title="Large File Warning",
+                message=f"The selected file '{os.path.basename(path)}' is very large ({file_size_mb:.1f} MB).\n\n"
+                        f"Loading large files may freeze the user interface or consume significant system memory (RAM).\n\n"
+                        f"Are you sure you want to proceed?"
+            )
+            if not confirm:
+                self._set_status("Loading cancelled", "orange")
+                self._write_preview(f"Load Cancelled:\n\nFile '{os.path.basename(path)}' ({file_size_mb:.1f} MB) was not loaded because it exceeds the 50 MB safety threshold.")
+                return
+
         ext = os.path.splitext(path)[1].lower()
+
+        # Enforce dependency validation before attempting ingestion
+        if ext == ".docx" and not HAS_MAMMOTH:
+            self._set_status("Cannot load: mammoth library missing!", "red")
+            tooltip_msg = f"Load Error:\n" \
+                          f"-----------------------------------\n" \
+                          f"The file '{os.path.basename(path)}' requires the 'mammoth' library for extraction, which is not installed.\n\n" \
+                          f"To resolve this, please install it via:\n" \
+                          f"    pip install mammoth"
+            self._write_preview(tooltip_msg)
+            return
+
+        if ext in (".xlsx", ".xls") and (not HAS_OPENPYXL or not HAS_PANDAS):
+            missing = []
+            if not HAS_PANDAS: missing.append("pandas")
+            if not HAS_OPENPYXL: missing.append("openpyxl")
+            missing_str = " and ".join(missing)
+            self._set_status(f"Cannot load: {missing_str} missing!", "red")
+            tooltip_msg = f"Load Error:\n" \
+                          f"-----------------------------------\n" \
+                          f"The file '{os.path.basename(path)}' requires the following library/libraries to be read:\n" \
+                          f"- {missing_str}\n\n" \
+                          f"To resolve this, please run:\n" \
+                          f"    pip install {' '.join(missing)}"
+            self._write_preview(tooltip_msg)
+            return
+
+        self._set_status("Loading and extracting file content...", "orange")
 
         # Update paths
         self.in_path.set(path)
@@ -342,6 +485,7 @@ class App(BaseClass): # type: ignore
                     
                     self.editor.delete("1.0", "end")
                     self.editor.insert("1.0", content)
+                    self.editor.edit_reset()  # Reset undo stack after loading new document content
                     self._update_counts()
                     
                     # Generate Overview log
@@ -386,9 +530,42 @@ class App(BaseClass): # type: ignore
             self._set_status("Please choose a save path!", "orange")
             return
 
+        # Validate Markdown tables to prevent malformed data parsing
+        from src.core.validator import validate_md_tables
+        warnings = validate_md_tables(content)
+        if warnings:
+            from tkinter import messagebox
+            warn_msg = "The following issues were detected in your Markdown tables:\n\n" + \
+                       "\n".join(f"- {w}" for w in warnings[:10])
+            if len(warnings) > 10:
+                warn_msg += f"\n- ... and {len(warnings) - 10} more warnings."
+            warn_msg += "\n\nDo you want to proceed with the conversion anyway?"
+            
+            confirm = messagebox.askyesno(
+                title="Table Validation Warning",
+                message=warn_msg
+            )
+            if not confirm:
+                self._set_status("Conversion cancelled", "orange")
+                return
+
+        if os.path.exists(out):
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                title="Overwrite Confirmation",
+                message=f"The file '{os.path.basename(out)}' already exists.\n\nDo you want to overwrite it?"
+            )
+            if not confirm:
+                self._set_status("Conversion cancelled", "orange")
+                return
+
         self.btn_convert.configure(state="disabled", text="Converting...")
         self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
         self._set_status("Processing conversion and writing file...", "orange")
+
+        # Show and start progress bar
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
+        self.progress_bar.start()
 
         def task():
             try:
@@ -414,18 +591,27 @@ class App(BaseClass): # type: ignore
                               f"- New size: {os.path.getsize(out) if os.path.exists(out) else 0} bytes\n\n" \
                               f"Click the 'OPEN CREATED FILE' button below to open and view your document directly!"
 
-                self.after(0, lambda: self._write_preview(log_details))
-                self.after(0, lambda: self._set_status(msg, color))
-                
-                if color == "green":
-                    self.after(0, lambda: self.btn_open_file.configure(
-                        state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
-                    ))
+                def update_success():
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._write_preview(log_details)
+                    self._set_status(msg, color)
+                    if color == "green":
+                        self.btn_open_file.configure(
+                            state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
+                        )
+                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
+
+                self.after(0, update_success)
             except Exception as e:
-                self.after(0, lambda: self._set_status(f"Conversion error: {e}", "red"))
-                self.after(0, lambda: self._write_preview(f"Conversion error details:\n{e}"))
-            
-            self.after(0, lambda: self.btn_convert.configure(state="normal", text="CONVERT & SAVE"))
+                def update_error():
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._set_status(f"Conversion error: {e}", "red")
+                    self._write_preview(f"Conversion error details:\n{e}")
+                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
+
+                self.after(0, update_error)
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -439,3 +625,17 @@ class App(BaseClass): # type: ignore
                 self._set_status(f"Failed to open file: {e}", "red")
         else:
             self._set_status("File does not exist or has not been created yet!", "orange")
+
+    def _undo(self, event=None):
+        try:
+            self.editor.edit_undo()
+        except Exception:
+            pass
+        return "break"
+
+    def _redo(self, event=None):
+        try:
+            self.editor.edit_redo()
+        except Exception:
+            pass
+        return "break"
