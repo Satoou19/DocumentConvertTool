@@ -9,3 +9,5 @@ test.md
 *.xlsx
 venv/
 agent_instructions.md
+.gitnexus
+PROJECT_SUMMARY.md
