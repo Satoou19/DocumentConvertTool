@@ -12,12 +12,6 @@ except ImportError:
 
 # Safety checks for critical document library dependencies to prevent crashes
 try:
-    import mammoth
-    HAS_MAMMOTH = True
-except ImportError:
-    HAS_MAMMOTH = False
-
-try:
     import openpyxl
     HAS_OPENPYXL = True
 except ImportError:
@@ -39,7 +33,7 @@ MODE_DEPENDENCIES = {
     "MD -> Excel":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
     "MD -> Word":   [("python-docx", HAS_DOCX)],
     "Excel -> MD":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
-    "Word -> MD":   [("mammoth", HAS_MAMMOTH)],
+    "Word -> MD":   [("python-docx", HAS_DOCX)],
 }
 
 from src.core.extractors import extract_excel_to_md, extract_word_to_md
@@ -152,8 +146,8 @@ class App(BaseClass): # type: ignore
         )
         editor_title.grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
 
-        # File Load Area / Drag Zone
-        self.load_bar = ctk.CTkFrame(left_pane, fg_color="#1c1c24", corner_radius=8, height=45)
+        # File Load Area / Drag Zone (with subtle border for drag enter/leave highlights)
+        self.load_bar = ctk.CTkFrame(left_pane, fg_color="#1c1c24", corner_radius=8, height=45, border_width=1, border_color="#2c2c35")
         self.load_bar.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
         self.load_bar.pack_propagate(False)
         
@@ -170,11 +164,13 @@ class App(BaseClass): # type: ignore
         )
         btn_browse_in.pack(side="right", padx=8, pady=8)
 
-        # Register Drag & Drop
+        # Register Drag & Drop with active drag hover animations
         if HAS_DND:
             for w in (self.load_bar, self.drop_lbl):
                 w.drop_target_register(DND_FILES) # type: ignore
                 w.dnd_bind("<<Drop>>", self._on_drop) # type: ignore
+                w.dnd_bind("<<DragEnter>>", self._on_drag_enter) # type: ignore
+                w.dnd_bind("<<DragLeave>>", self._on_drag_leave) # type: ignore
 
         # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
@@ -403,6 +399,7 @@ class App(BaseClass): # type: ignore
     # ── Load file on drop or browse ───────────────────────────────────────────
 
     def _on_drop(self, event):
+        self._on_drag_leave(event)  # Reset highlight borders immediately
         raw_data = event.data
         if not raw_data:
             return
@@ -438,28 +435,49 @@ class App(BaseClass): # type: ignore
             self._load_file_to_editor(path)
 
     def _load_file_to_editor(self, path: str):
-        if not os.path.exists(path):
-            self._set_status("Input file does not exist!", "red")
+        from src.core.validator import validate_file_integrity
+        res = validate_file_integrity(path)
+        if res:
+            self.in_path.set("")
+            self.full_content = ""
+            self.editor.configure(state="normal")
+            self.editor.delete("1.0", "end")  # Clear editor content on load failure
+            short_err, detailed_err = res
+            self.drop_lbl.configure(text=f"Failed: {short_err}", text_color="#e74c3c")
+            self._set_status(f"Load error: {short_err}", "red")
+            self._write_preview(f"LOAD ERROR:\n\n{detailed_err}")
+            from tkinter import messagebox
+            messagebox.showerror(parent=self, title="File Ingestion Error", message=detailed_err)
             return
 
         ext = os.path.splitext(path)[1].lower()
 
         # Enforce dependency validation before attempting ingestion
-        if ext == ".docx" and not HAS_MAMMOTH:
-            self._set_status("Cannot load: mammoth library missing!", "red")
+        if ext == ".docx" and not HAS_DOCX:
+            self.in_path.set("")
+            self.full_content = ""
+            self.editor.configure(state="normal")
+            self.editor.delete("1.0", "end")  # Clear editor content on load failure
+            self.drop_lbl.configure(text="Failed: python-docx missing", text_color="#e74c3c")
+            self._set_status("Cannot load: python-docx library missing!", "red")
             tooltip_msg = f"Load Error:\n" \
                           f"-----------------------------------\n" \
-                          f"The file '{os.path.basename(path)}' requires the 'mammoth' library for extraction, which is not installed.\n\n" \
+                          f"The file '{os.path.basename(path)}' requires the 'python-docx' library for extraction, which is not installed.\n\n" \
                           f"To resolve this, please install it via:\n" \
-                          f"    pip install mammoth"
+                          f"    pip install python-docx"
             self._write_preview(tooltip_msg)
             return
 
         if ext in (".xlsx", ".xls") and (not HAS_OPENPYXL or not HAS_PANDAS):
+            self.in_path.set("")
+            self.full_content = ""
+            self.editor.configure(state="normal")
+            self.editor.delete("1.0", "end")  # Clear editor content on load failure
             missing = []
             if not HAS_PANDAS: missing.append("pandas")
             if not HAS_OPENPYXL: missing.append("openpyxl")
             missing_str = " and ".join(missing)
+            self.drop_lbl.configure(text=f"Failed: {missing_str} missing", text_color="#e74c3c")
             self._set_status(f"Cannot load: {missing_str} missing!", "red")
             tooltip_msg = f"Load Error:\n" \
                           f"-----------------------------------\n" \
@@ -472,9 +490,9 @@ class App(BaseClass): # type: ignore
 
         self._set_status("Loading and extracting file content...", "orange")
 
-        # Update paths
+        # Update paths (Set state to 'Loading' in orange, NOT loaded yet)
         self.in_path.set(path)
-        self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
+        self.drop_lbl.configure(text=f"Loading: {os.path.basename(path)}...", text_color="#e67e22")
 
         def task():
             try:
@@ -545,11 +563,20 @@ class App(BaseClass): # type: ignore
                     
                     self._write_preview(preview_msg)
                     self._set_status("Loaded and extracted successfully!" if not is_truncated else "Loaded (preview truncated for performance)", "green")
+                    self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
 
                 self.after(0, update_ui)
             except Exception as e:
-                self.after(0, lambda: self._set_status(f"Load error: {e}", "red"))
-                self.after(0, lambda: self._write_preview(f"Load error details:\n{e}"))
+                err_msg = str(e)
+                def update_error():
+                    self.in_path.set("")
+                    self.full_content = ""
+                    self.editor.configure(state="normal")
+                    self.editor.delete("1.0", "end")  # Clear editor content on load failure
+                    self.drop_lbl.configure(text=f"Failed: {err_msg}", text_color="#e74c3c")
+                    self._set_status(f"Load error: {err_msg}", "red")
+                    self._write_preview(f"Load error details:\n{err_msg}")
+                self.after(0, update_error)
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -595,6 +622,23 @@ class App(BaseClass): # type: ignore
                 return
 
         # Validate Markdown tables to prevent malformed data parsing
+        if mode == "MD -> Excel":
+            from src.core.converters import parse_md_tables
+            if not parse_md_tables(content):
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    parent=self,
+                    title="No Tables Found",
+                    message="No tables were found in the Markdown content.\n\n"
+                            "To convert to Excel, your Markdown file must contain at least one table in standard Markdown format, for example:\n\n"
+                            "| Column 1 | Column 2 |\n"
+                            "| --- | --- |\n"
+                            "| Value 1 | Value 2 |\n\n"
+                            "Please ensure there is a separator row (like '|---|') below the header row."
+                )
+                self._set_status("No tables found in content", "red")
+                return
+
         from src.core.validator import validate_md_tables
         warnings = validate_md_tables(content)
         if warnings:
@@ -623,6 +667,21 @@ class App(BaseClass): # type: ignore
                 self._set_status("Conversion cancelled", "orange")
                 return
 
+            # Check if the output file is locked by another application
+            try:
+                with open(out, "r+b") as f:
+                    pass
+            except PermissionError:
+                self._set_status("Output file locked!", "red")
+                messagebox.showerror(
+                    parent=self,
+                    title="File Lock Error",
+                    message=f"The destination file '{os.path.basename(out)}' is currently open or locked by another application (e.g., Microsoft Word or Excel).\n\nPlease close the application holding the file and try again."
+                )
+                return
+            except Exception:
+                pass
+
         self.btn_convert.configure(state="disabled", text="Converting...")
         self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
         self._set_status("Processing conversion and writing file...", "orange")
@@ -646,20 +705,27 @@ class App(BaseClass): # type: ignore
                 color = "green" if msg.startswith("Exported") or msg.startswith("Word") or msg.startswith("Markdown") else "red"
                 
                 # Output Overview details
-                log_details = f"DOCUMENT EXPORT LOG:\n" \
-                              f"-----------------------------------\n" \
-                              f"- Result: SUCCESS\n" \
-                              f"- Conversion mode: {mode}\n" \
-                              f"- Generated file: {os.path.basename(out)}\n" \
-                              f"- Save folder: {os.path.dirname(out)}\n" \
-                              f"- New size: {os.path.getsize(out) if os.path.exists(out) else 0} bytes\n\n" \
-                              f"Click the 'OPEN CREATED FILE' button below to open and view your document directly!"
+                if color == "red":
+                    log_details = f"DOCUMENT EXPORT LOG:\n" \
+                                  f"-----------------------------------\n" \
+                                  f"- Result: FAILED\n" \
+                                  f"- Conversion mode: {mode}\n\n" \
+                                  f"Error:\n{msg}"
+                else:
+                    log_details = f"DOCUMENT EXPORT LOG:\n" \
+                                  f"-----------------------------------\n" \
+                                  f"- Result: SUCCESS\n" \
+                                  f"- Conversion mode: {mode}\n" \
+                                  f"- Generated file: {os.path.basename(out)}\n" \
+                                  f"- Save folder: {os.path.dirname(out)}\n" \
+                                  f"- New size: {os.path.getsize(out) if os.path.exists(out) else 0} bytes\n\n" \
+                                  f"Click the 'OPEN CREATED FILE' button below to open and view your document directly!"
 
                 def update_success():
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
                     self._write_preview(log_details)
-                    self._set_status(msg, color)
+                    self._set_status(msg.split("\n")[0] if "\n" in msg else msg, color)
                     if color == "green":
                         self.btn_open_file.configure(
                             state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
@@ -669,11 +735,12 @@ class App(BaseClass): # type: ignore
 
                 self.after(0, update_success)
             except Exception as e:
+                err_msg = str(e)
                 def update_error():
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
-                    self._set_status(f"Conversion error: {e}", "red")
-                    self._write_preview(f"Conversion error details:\n{e}")
+                    self._set_status(f"Conversion error: {err_msg}", "red")
+                    self._write_preview(f"Conversion error details:\n{err_msg}")
                     self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
 
                 self.after(0, update_error)
@@ -704,6 +771,18 @@ class App(BaseClass): # type: ignore
         except Exception:
             pass
         return "break"
+
+    def _on_drag_enter(self, event):
+        self.load_bar.configure(border_color="#3a86ff", border_width=2)
+        self.drop_lbl.configure(text="Drop the file now!", text_color="#3a86ff")
+
+    def _on_drag_leave(self, event=None):
+        self.load_bar.configure(border_color="#2c2c35", border_width=1)
+        inp = self.in_path.get().strip()
+        if inp:
+            self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(inp)}", text_color="#2ecc71")
+        else:
+            self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color="#7eb8f5")
 
     def _on_closing(self):
         if self.is_dirty:
