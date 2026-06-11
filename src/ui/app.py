@@ -95,6 +95,7 @@ class App(BaseClass): # type: ignore
         self.mode_var = ctk.StringVar(value="MD -> Excel")
         self.full_content = ""  # Lưu toàn bộ content khi tải file lớn
         self.is_dirty = False
+        self.is_processing = False
         
         self._build_ui()
         self._on_mode_change()
@@ -157,12 +158,12 @@ class App(BaseClass): # type: ignore
         )
         self.drop_lbl.pack(side="left", padx=15, fill="both", expand=True)
 
-        btn_browse_in = ctk.CTkButton(
+        self.btn_browse_in = ctk.CTkButton(
             self.load_bar, text="Browse", width=75, height=28,
             font=ctk.CTkFont(family="Arial", size=12, weight="bold"), fg_color="#2980b9", hover_color="#3498db",
             command=self._browse_input
         )
-        btn_browse_in.pack(side="right", padx=8, pady=8)
+        self.btn_browse_in.pack(side="right", padx=8, pady=8)
 
         # Register Drag & Drop with active drag hover animations
         if HAS_DND:
@@ -204,26 +205,26 @@ class App(BaseClass): # type: ignore
         )
         self.word_lbl.pack(side="left", padx=5)
 
-        btn_clear = ctk.CTkButton(
+        self.btn_clear = ctk.CTkButton(
             editor_footer, text="Clear All", width=70, height=24, fg_color="#c0392b", hover_color="#e74c3c",
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
             command=self._clear_editor
         )
-        btn_clear.pack(side="right", padx=5)
+        self.btn_clear.pack(side="right", padx=5)
 
-        btn_redo = ctk.CTkButton(
+        self.btn_redo = ctk.CTkButton(
             editor_footer, text="Redo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
             command=self._redo
         )
-        btn_redo.pack(side="right", padx=5)
+        self.btn_redo.pack(side="right", padx=5)
 
-        btn_undo = ctk.CTkButton(
+        self.btn_undo = ctk.CTkButton(
             editor_footer, text="Undo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
             command=self._undo
         )
-        btn_undo.pack(side="right", padx=5)
+        self.btn_undo.pack(side="right", padx=5)
 
 
         # ── RIGHT PANE: Output Configuration, Preview & Actions ───────────────
@@ -269,12 +270,12 @@ class App(BaseClass): # type: ignore
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
         
-        btn_browse_out = ctk.CTkButton(
+        self.btn_browse_out = ctk.CTkButton(
             row_out, text="Browse", width=65, height=28,
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"), fg_color="#2980b9", hover_color="#3498db",
             command=self._browse_output
         )
-        btn_browse_out.pack(side="right", padx=2)
+        self.btn_browse_out.pack(side="right", padx=2)
 
         # Output Preview & Logs Workspace
         self.preview_box = ctk.CTkTextbox(
@@ -357,6 +358,8 @@ class App(BaseClass): # type: ignore
                 self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
 
     def _clear_editor(self):
+        if self.is_processing:
+            return
         self.editor.configure(state="normal", text_color="#f8f8f2") # Mở khóa editor và đặt lại màu chữ
         self.editor.delete("1.0", "end")
         self.editor.edit_reset()  # Reset undo stack after manual clearing
@@ -396,9 +399,42 @@ class App(BaseClass): # type: ignore
         target_color = hex_colors.get(color, color)
         self.status_lbl.configure(text=msg, text_color=target_color)
 
+    def _toggle_ui_state(self, enabled: bool):
+        self.is_processing = not enabled
+        state = "normal" if enabled else "disabled"
+        
+        if enabled:
+            mode = self.mode_var.get()
+            missing = [name for name, available in MODE_DEPENDENCIES[mode] if not available]
+            if missing:
+                self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
+            else:
+                self.btn_convert.configure(state="normal", fg_color="#2ecc71", text="CONVERT & SAVE")
+        else:
+            self.btn_convert.configure(state="disabled")
+
+        self.btn_browse_in.configure(state=state)
+        self.btn_clear.configure(state=state)
+        self.btn_undo.configure(state=state)
+        self.btn_redo.configure(state=state)
+        self.mode_menu.configure(state=state)
+        self.entry_out.configure(state=state)
+        self.btn_browse_out.configure(state=state)
+        
+        if not enabled:
+            self.editor.configure(state="disabled")
+        else:
+            is_large_file = self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT
+            if is_large_file:
+                self.editor.configure(state="disabled", text_color="#8a8a9e")
+            else:
+                self.editor.configure(state="normal", text_color="#f8f8f2")
+
     # ── Load file on drop or browse ───────────────────────────────────────────
 
     def _on_drop(self, event):
+        if self.is_processing:
+            return
         self._on_drag_leave(event)  # Reset highlight borders immediately
         raw_data = event.data
         if not raw_data:
@@ -423,6 +459,8 @@ class App(BaseClass): # type: ignore
             self._set_status(f"Loaded first file. Ignored {len(paths)-1} other files.", "orange")
 
     def _browse_input(self):
+        if self.is_processing:
+            return
         # We allow loading any supported document type to auto-detect
         path = filedialog.askopenfilename(parent=self, filetypes=[
             ("Supported Documents", "*.md *.xlsx *.xls *.docx"),
@@ -488,6 +526,10 @@ class App(BaseClass): # type: ignore
             self._write_preview(tooltip_msg)
             return
 
+        self._toggle_ui_state(False)
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
+        self.progress_bar.start()
+
         self._set_status("Loading and extracting file content...", "orange")
 
         # Update paths (Set state to 'Loading' in orange, NOT loaded yet)
@@ -531,11 +573,6 @@ class App(BaseClass): # type: ignore
                     self.editor.insert("1.0", display_content)
                     self.editor.edit_reset()  # Reset undo stack after loading new document content
                     
-                    if is_truncated:
-                        self.editor.configure(state="disabled", text_color="#8a8a9e")
-                    else:
-                        self.editor.configure(state="normal", text_color="#f8f8f2")
-                        
                     self.is_dirty = False
                     self._update_counts()
                     
@@ -564,6 +601,10 @@ class App(BaseClass): # type: ignore
                     self._write_preview(preview_msg)
                     self._set_status("Loaded and extracted successfully!" if not is_truncated else "Loaded (preview truncated for performance)", "green")
                     self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
+                    
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._toggle_ui_state(True)
 
                 self.after(0, update_ui)
             except Exception as e:
@@ -576,11 +617,16 @@ class App(BaseClass): # type: ignore
                     self.drop_lbl.configure(text=f"Failed: {err_msg}", text_color="#e74c3c")
                     self._set_status(f"Load error: {err_msg}", "red")
                     self._write_preview(f"Load error details:\n{err_msg}")
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._toggle_ui_state(True)
                 self.after(0, update_error)
 
         threading.Thread(target=task, daemon=True).start()
 
     def _browse_output(self):
+        if self.is_processing:
+            return
         ext = self._cfg()["out_ext"]
         path = filedialog.asksaveasfilename(parent=self,
             defaultextension=ext, filetypes=OUT_FILETYPES[ext],
@@ -592,6 +638,8 @@ class App(BaseClass): # type: ignore
     # ── Execute Document Generation & Export ─────────────────────────────────
 
     def _run_conversion(self):
+        if self.is_processing:
+            return
         # Ưu tiên dùng full_content nếu file lớn (vượt quá giới hạn hiển thị của editor) được tải
         is_large_file = self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT
         content = self.full_content if is_large_file else self.editor.get("1.0", "end-1c").strip()
@@ -682,7 +730,8 @@ class App(BaseClass): # type: ignore
             except Exception:
                 pass
 
-        self.btn_convert.configure(state="disabled", text="Converting...")
+        self._toggle_ui_state(False)
+        self.btn_convert.configure(text="Converting...")
         self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
         self._set_status("Processing conversion and writing file...", "orange")
 
@@ -726,12 +775,12 @@ class App(BaseClass): # type: ignore
                     self.progress_bar.grid_remove()
                     self._write_preview(log_details)
                     self._set_status(msg.split("\n")[0] if "\n" in msg else msg, color)
+                    self._toggle_ui_state(True)
                     if color == "green":
                         self.btn_open_file.configure(
                             state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
                         )
                         self.is_dirty = False
-                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
 
                 self.after(0, update_success)
             except Exception as e:
@@ -741,7 +790,7 @@ class App(BaseClass): # type: ignore
                     self.progress_bar.grid_remove()
                     self._set_status(f"Conversion error: {err_msg}", "red")
                     self._write_preview(f"Conversion error details:\n{err_msg}")
-                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
+                    self._toggle_ui_state(True)
 
                 self.after(0, update_error)
 
@@ -759,6 +808,8 @@ class App(BaseClass): # type: ignore
             self._set_status("File does not exist or has not been created yet!", "orange")
 
     def _undo(self, event=None):
+        if self.is_processing:
+            return "break"
         try:
             self.editor.edit_undo()
         except Exception:
@@ -766,6 +817,8 @@ class App(BaseClass): # type: ignore
         return "break"
 
     def _redo(self, event=None):
+        if self.is_processing:
+            return "break"
         try:
             self.editor.edit_redo()
         except Exception:
@@ -773,10 +826,14 @@ class App(BaseClass): # type: ignore
         return "break"
 
     def _on_drag_enter(self, event):
+        if self.is_processing:
+            return
         self.load_bar.configure(border_color="#3a86ff", border_width=2)
         self.drop_lbl.configure(text="Drop the file now!", text_color="#3a86ff")
 
     def _on_drag_leave(self, event=None):
+        if self.is_processing:
+            return
         self.load_bar.configure(border_color="#2c2c35", border_width=1)
         inp = self.in_path.get().strip()
         if inp:
@@ -785,7 +842,15 @@ class App(BaseClass): # type: ignore
             self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color="#7eb8f5")
 
     def _on_closing(self):
-        if self.is_dirty:
+        if self.is_processing:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                title="Operation in Progress",
+                message="An operation is currently in progress. Exiting may interrupt the process.\n\nAre you sure you want to exit?"
+            )
+            if not confirm:
+                return
+        elif self.is_dirty:
             from tkinter import messagebox
             confirm = messagebox.askyesno(
                 title="Unsaved Changes",
