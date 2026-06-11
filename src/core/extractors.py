@@ -24,78 +24,106 @@ def extract_excel_to_md(in_path: str) -> str:
 
 
 def extract_word_to_md(in_path: str) -> str:
-    """Extracts Word .docx to clean Markdown text using Mammoth.
-    Images are stripped from output to prevent massive base64 strings from bloating the content."""
-    import mammoth
-    
-    # Validate DOCX file trước (DOCX là ZIP archive)
+    """Extracts Word .docx to clean Markdown text, preserving tables, headings, bold/italic styles, and lists."""
+    import docx
+    from docx.oxml.text.paragraph import CT_P
+    from docx.oxml.table import CT_Tbl
+    from docx.text.paragraph import Paragraph
+    from docx.table import Table
+
+    # Validate DOCX file
+    import zipfile
     try:
         if not zipfile.is_zipfile(in_path):
             return "⚠️ File Validation Error: Invalid file. Please select a valid DOCX document."
     except Exception as e:
         return f"⚠️ File Validation Error: {e}"
-    
+
     try:
-        with open(in_path, "rb") as f:
-            # Extract markdown từ DOCX
-            result = mammoth.convert_to_markdown(f)
-        
-        # Kiểm tra kết quả từ Mammoth
-        if not result or not result.value:
-            return "⚠️ Extract Error: Mammoth returned empty result. File may be corrupted or has no text content."
-        
-        markdown = result.value
-        
-        # Kiểm tra encoding - ensure it's valid UTF-8 string
-        if isinstance(markdown, bytes):
-            try:
-                markdown = markdown.decode('utf-8', errors='replace')
-            except Exception as e:
-                return f"⚠️ Encoding Error: {e}"
-        
-        # Nếu vẫn là binary/garbled, báo lỗi
-        if not isinstance(markdown, str):
-            return f"⚠️ Extract Error: Unexpected data type from Mammoth: {type(markdown)}"
-        
-        # Replace base64 images với placeholder thân thiện
-        # ![alt text](data:image/png;base64,...) → [📷 Image 1: alt text] hoặc [📷 Image 1]
-        image_counter = [1]  # Dùng list để modify trong nested function
-        
-        def replace_image(match):
-            alt_text = match.group(1).strip()
-            if alt_text:
-                placeholder = f"[📷 Image {image_counter[0]}: {alt_text}]"
-            else:
-                placeholder = f"[📷 Image {image_counter[0]}]"
-            image_counter[0] += 1
-            return placeholder
-        
-        markdown = re.sub(r'!\[([^\]]*)\]\(data:image/[^)]*\)', replace_image, markdown)
-        
-        markdown = re.sub(r"\\([.\-_~*`\[\]()#+!{}])", r"\1", markdown)
-        
-        # Clean list numbers
-        lines = markdown.splitlines()
-        global_counter = 1
-        final_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if re.match(r"^1\.\s+", stripped):
-                replaced_line = re.sub(
-                    r"^(.*?)1\.\s+", 
-                    lambda m: f"{m.group(1)}{global_counter}. ", 
-                    line, 
-                    count=1
-                )
-                final_lines.append(replaced_line)
-                global_counter += 1
-            else:
-                final_lines.append(line)
-        
-        return "\n".join(final_lines)
-    
+        doc = docx.Document(in_path)
+        parts = []
+
+        def iter_block_items(parent):
+            parent_elm = parent.element.body
+            for child in parent_elm.iterchildren():
+                if isinstance(child, CT_P):
+                    yield Paragraph(child, parent)
+                elif isinstance(child, CT_Tbl):
+                    yield Table(child, parent)
+
+        for block in iter_block_items(doc):
+            if isinstance(block, Paragraph):
+                text = block.text.strip()
+                if not text:
+                    # Empty paragraph
+                    parts.append("")
+                    continue
+                
+                style_name = block.style.name.lower() if block.style else ""
+                
+                # Check runs for bold / italic formatting
+                para_parts = []
+                for run in block.runs:
+                    run_text = run.text
+                    if not run_text:
+                        continue
+                    stripped_run = run_text.strip()
+                    if not stripped_run:
+                        para_parts.append(run_text)
+                        continue
+                    
+                    # Wrap formatting
+                    r_text = run_text
+                    if run.bold:
+                        r_text = r_text.replace(stripped_run, f"**{stripped_run}**")
+                    if run.italic:
+                        r_text = r_text.replace(stripped_run, f"*{stripped_run}*")
+                    para_parts.append(r_text)
+                
+                para_text = "".join(para_parts).strip()
+                if not para_text:
+                    para_text = text
+
+                # Apply block formatting based on style
+                if style_name.startswith("heading "):
+                    try:
+                        level = int(style_name.split()[-1])
+                        parts.append("#" * level + " " + para_text)
+                    except ValueError:
+                        parts.append(para_text)
+                elif "bullet" in style_name:
+                    parts.append("- " + para_text)
+                elif "number" in style_name or style_name.startswith("list"):
+                    parts.append("1. " + para_text)
+                else:
+                    parts.append(para_text)
+
+            elif isinstance(block, Table):
+                # Convert tables to Markdown tables
+                table_parts = []
+                rows_data = []
+                for row in block.rows:
+                    row_cells = []
+                    for cell in row.cells:
+                        cell_text = cell.text.strip().replace("\n", " ")
+                        row_cells.append(cell_text)
+                    rows_data.append(row_cells)
+                
+                if rows_data:
+                    # Header row
+                    header = "| " + " | ".join(rows_data[0]) + " |"
+                    # Separator line
+                    sep = "| " + " | ".join("---" for _ in rows_data[0]) + " |"
+                    table_parts.append(header)
+                    table_parts.append(sep)
+                    # Data rows
+                    for row in rows_data[1:]:
+                        table_parts.append("| " + " | ".join(row) + " |")
+                    parts.append("\n".join(table_parts))
+                    parts.append("") # Blank line after table
+
+        return "\n\n".join(parts)
     except Exception as e:
-        # Log chi tiết lỗi
         error_msg = f"⚠️ Word Extraction Error:\n\nDetails: {str(e)}\n\nFile: {in_path}"
         print(f"[ERROR] extract_word_to_md: {error_msg}")
         return error_msg

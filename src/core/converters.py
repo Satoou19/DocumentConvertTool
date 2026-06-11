@@ -37,7 +37,14 @@ def md_to_excel_from_text(content: str, out_path: str) -> str:
 
     tables = parse_md_tables(content)
     if not tables:
-        return "No tables found in the Markdown content."
+        return (
+            "No tables found in the Markdown content.\n\n"
+            "To convert to Excel, please ensure your Markdown content has tables that follow the standard Markdown format, for example:\n\n"
+            "| Column 1 | Column 2 |\n"
+            "| --- | --- |\n"
+            "| Value 1 | Value 2 |\n\n"
+            "Make sure you include the separator row (the line with dashes like '| --- | --- |') below the header row."
+        )
 
     seen = {}
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
