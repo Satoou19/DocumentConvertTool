@@ -59,11 +59,18 @@ def extract_word_to_md(in_path: str) -> str:
                     parts.append("")
                     continue
                 
-                style_name = block.style.name.lower() if block.style else ""
+                style_name = (block.style.name or "").lower() if block.style else ""
                 
+                def run_contains_image(run):
+                    xml = getattr(run._element, "xml", "")
+                    return "<w:drawing" in xml or "<w:pict" in xml or "<a:blip" in xml
+
                 # Check runs for bold / italic formatting
                 para_parts = []
                 for run in block.runs:
+                    if run_contains_image(run):
+                        para_parts.append("[image]")
+                        continue
                     run_text = run.text
                     if not run_text:
                         continue
