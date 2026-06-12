@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 import threading
 import customtkinter as ctk
 from tkinter import filedialog
@@ -36,8 +38,13 @@ MODE_DEPENDENCIES = {
     "Word -> MD":   [("python-docx", HAS_DOCX)],
 }
 
-from src.core.extractors import extract_excel_to_md, extract_word_to_md
-from src.core.converters import md_to_excel_from_text, md_to_word_from_text, save_markdown_from_text
+from src.services.file_loader import load_document
+from src.services.conversion_service import (
+    convert_content,
+    get_md_table_warnings,
+    has_md_tables,
+    is_output_locked,
+)
 
 # ── Configuration constants ───────────────────────────────────────────────────
 
@@ -473,57 +480,32 @@ class App(BaseClass): # type: ignore
             self._load_file_to_editor(path)
 
     def _load_file_to_editor(self, path: str):
-        from src.core.validator import validate_file_integrity
-        res = validate_file_integrity(path)
-        if res:
+        result = load_document(path)
+        if not result.success:
             self.in_path.set("")
             self.full_content = ""
             self.editor.configure(state="normal")
             self.editor.delete("1.0", "end")  # Clear editor content on load failure
-            short_err, detailed_err = res
-            self.drop_lbl.configure(text=f"Failed: {short_err}", text_color="#e74c3c")
-            self._set_status(f"Load error: {short_err}", "red")
-            self._write_preview(f"LOAD ERROR:\n\n{detailed_err}")
-            from tkinter import messagebox
-            messagebox.showerror(parent=self, title="File Ingestion Error", message=detailed_err)
-            return
 
-        ext = os.path.splitext(path)[1].lower()
-
-        # Enforce dependency validation before attempting ingestion
-        if ext == ".docx" and not HAS_DOCX:
-            self.in_path.set("")
-            self.full_content = ""
-            self.editor.configure(state="normal")
-            self.editor.delete("1.0", "end")  # Clear editor content on load failure
-            self.drop_lbl.configure(text="Failed: python-docx missing", text_color="#e74c3c")
-            self._set_status("Cannot load: python-docx library missing!", "red")
-            tooltip_msg = f"Load Error:\n" \
-                          f"-----------------------------------\n" \
-                          f"The file '{os.path.basename(path)}' requires the 'python-docx' library for extraction, which is not installed.\n\n" \
-                          f"To resolve this, please install it via:\n" \
-                          f"    pip install python-docx"
-            self._write_preview(tooltip_msg)
-            return
-
-        if ext in (".xlsx", ".xls") and (not HAS_OPENPYXL or not HAS_PANDAS):
-            self.in_path.set("")
-            self.full_content = ""
-            self.editor.configure(state="normal")
-            self.editor.delete("1.0", "end")  # Clear editor content on load failure
-            missing = []
-            if not HAS_PANDAS: missing.append("pandas")
-            if not HAS_OPENPYXL: missing.append("openpyxl")
-            missing_str = " and ".join(missing)
-            self.drop_lbl.configure(text=f"Failed: {missing_str} missing", text_color="#e74c3c")
-            self._set_status(f"Cannot load: {missing_str} missing!", "red")
-            tooltip_msg = f"Load Error:\n" \
-                          f"-----------------------------------\n" \
-                          f"The file '{os.path.basename(path)}' requires the following library/libraries to be read:\n" \
-                          f"- {missing_str}\n\n" \
-                          f"To resolve this, please run:\n" \
-                          f"    pip install {' '.join(missing)}"
-            self._write_preview(tooltip_msg)
+            if result.missing_dependencies:
+                missing_str = " and ".join(result.missing_dependencies)
+                self.drop_lbl.configure(text=f"Failed: {missing_str} missing", text_color="#e74c3c")
+                self._set_status(f"Cannot load: {missing_str} missing!", "red")
+                tooltip_msg = f"Load Error:\n" \
+                              f"-----------------------------------\n" \
+                              f"The file '{os.path.basename(path)}' requires the following library/libraries to be installed:\n" \
+                              f"- {missing_str}\n\n" \
+                              f"To resolve this, please run:\n" \
+                              f"    pip install {' '.join(result.missing_dependencies)}"
+                self._write_preview(tooltip_msg)
+            else:
+                short_err = result.error_short or "Load error"
+                detailed_err = result.error_detail or "An unknown error occurred during load."
+                self.drop_lbl.configure(text=f"Failed: {short_err}", text_color="#e74c3c")
+                self._set_status(f"Load error: {short_err}", "red")
+                self._write_preview(f"LOAD ERROR:\n\n{detailed_err}")
+                from tkinter import messagebox
+                messagebox.showerror(parent=self, title="File Ingestion Error", message=detailed_err)
             return
 
         self._toggle_ui_state(False)
@@ -541,19 +523,12 @@ class App(BaseClass): # type: ignore
                 content = ""
                 detected_mode = None
 
-                if ext == ".md":
-                    detected_mode = "MD -> Excel"  # Default
-                    with open(path, encoding="utf-8") as f:
-                        content = f.read()
-                elif ext in (".xlsx", ".xls"):
-                    detected_mode = "Excel -> MD"
-                    content = extract_excel_to_md(path)
-                elif ext == ".docx":
-                    detected_mode = "Word -> MD"
-                    content = extract_word_to_md(path)
-                    print(f"[DEBUG] Extracted content size: {len(content):,} chars ({len(content)/1024/1024:.2f} MB)")
-                else:
-                    raise ValueError(f"File extension {ext} is not supported!")
+                if not result.success:
+                    raise RuntimeError(result.error_detail or result.error_short or "Failed to load document.")
+                detected_mode = result.mode
+                content = result.content
+                ext = os.path.splitext(path)[1].lower()
+                print(f"[DEBUG] Extracted content size: {len(content):,} chars ({len(content)/1024/1024:.2f} MB)")
 
                 # Update UI on main thread
                 def update_ui():
@@ -671,8 +646,7 @@ class App(BaseClass): # type: ignore
 
         # Validate Markdown tables to prevent malformed data parsing
         if mode == "MD -> Excel":
-            from src.core.converters import parse_md_tables
-            if not parse_md_tables(content):
+            if not has_md_tables(content):
                 from tkinter import messagebox
                 messagebox.showwarning(
                     parent=self,
@@ -687,8 +661,7 @@ class App(BaseClass): # type: ignore
                 self._set_status("No tables found in content", "red")
                 return
 
-        from src.core.validator import validate_md_tables
-        warnings = validate_md_tables(content)
+        warnings = get_md_table_warnings(content)
         if warnings:
             from tkinter import messagebox
             warn_msg = "The following issues were detected in your Markdown tables:\n\n" + \
@@ -715,41 +688,18 @@ class App(BaseClass): # type: ignore
                 self._set_status("Conversion cancelled", "orange")
                 return
 
-            # Check if the output file is locked by another application
-            try:
-                with open(out, "r+b") as f:
-                    pass
-            except PermissionError:
-                self._set_status("Output file locked!", "red")
-                messagebox.showerror(
-                    parent=self,
-                    title="File Lock Error",
-                    message=f"The destination file '{os.path.basename(out)}' is currently open or locked by another application (e.g., Microsoft Word or Excel).\n\nPlease close the application holding the file and try again."
-                )
-                return
-            except Exception:
-                pass
-
-        self._toggle_ui_state(False)
-        self.btn_convert.configure(text="Converting...")
-        self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
-        self._set_status("Processing conversion and writing file...", "orange")
-
-        # Show and start progress bar
-        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
-        self.progress_bar.start()
-
+                if is_output_locked(out):
+                    self._set_status("Output file locked!", "red")
+                    messagebox.showerror(
+                        parent=self,
+                        title="File Lock Error",
+                        message=f"The destination file '{os.path.basename(out)}' is currently open or locked by another application (e.g., Microsoft Word or Excel).\n\nPlease close the application holding the file and try again."
+                    )
+                    return
         def task():
             try:
                 # Direct dispatcher
-                if mode == "MD -> Excel":
-                    msg = md_to_excel_from_text(content, out)
-                elif mode == "MD -> Word":
-                    msg = md_to_word_from_text(content, out)
-                elif mode in ("Excel -> MD", "Word -> MD"):
-                    msg = save_markdown_from_text(content, out)
-                else:
-                    raise ValueError(f"Invalid mode {mode}!")
+                msg = convert_content(mode, content, out)
 
                 color = "green" if msg.startswith("Exported") or msg.startswith("Word") or msg.startswith("Markdown") else "red"
                 
@@ -800,7 +750,12 @@ class App(BaseClass): # type: ignore
         out = self.out_path.get().strip()
         if out and os.path.exists(out):
             try:
-                os.startfile(out)
+                if sys.platform == "win32":
+                    os.startfile(out)
+                elif sys.platform == "darwin":
+                    subprocess.run(["open", out], check=True)
+                else:
+                    subprocess.run(["xdg-open", out], check=True)
                 self._set_status("Opened file in default application", "green")
             except Exception as e:
                 self._set_status(f"Failed to open file: {e}", "red")
