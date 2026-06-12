@@ -1,6 +1,6 @@
 # Document Converter Workspace
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![Python](https://img.shields.io/badge/Python-3.12%20--%203.13-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-green)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
@@ -57,21 +57,24 @@ The application provides a unified Markdown-centric workflow, allowing users to 
 
 ## Supported Formats
 
-| Input          | Output         |
-| -------------- | -------------- |
-| Markdown (.md) | Excel (.xlsx)  |
-| Markdown (.md) | Word (.docx)   |
-| Excel (.xlsx)  | Markdown (.md) |
-| Word (.docx)   | Markdown (.md) |
+| Input          | Output              | Status      |
+| -------------- | ------------------- | ----------- |
+| Markdown (.md) | Excel (.xlsx)       | ✅ Available |
+| Markdown (.md) | Word (.docx)        | ✅ Available |
+| Excel (.xlsx)  | Markdown (.md)      | ✅ Available |
+| Word (.docx)   | Markdown (.md)      | ✅ Available |
+| CSV (.csv)     | Markdown (.md)      | 🔄 Planning |
+| Markdown (.md) | CSV (.csv)          | 🔄 Planning |
+| PDF (.pdf)     | Markdown (.md)      | 🔄 Planning |
+| Markdown (.md) | HTML (.html)        | 🔄 Planning |
+| Markdown (.md) | PDF (.pdf)          | 🔄 Planning |
 
 ---
 
 ## Requirements
 
-* Python 3.10+
-* Windows
-* macOS
-* Linux
+* Python 3.12 – 3.13
+* Windows / macOS / Linux
 
 ---
 
@@ -84,65 +87,20 @@ git clone https://github.com/duyphan1410/DocumentConvertTool
 cd DocumentConvertTool
 ```
 
-Create a virtual environment:
-
-```bash
-python -m venv venv
-```
-
-Install dependencies:
-
-### Windows
-
-```bash
-.\venv\Scripts\pip.exe install -r requirements.txt
-```
-
-### macOS / Linux
-
-```bash
-./venv/bin/pip install -r requirements.txt
-```
-
-Run the application:
-
-### Windows
-
-```bash
-.\venv\Scripts\python.exe run.py
-```
-
-### macOS / Linux
-
-```bash
-./venv/bin/python run.py
-```
-
----
-
-## Alternative: Activate Virtual Environment
+Create, activate virtual environment, install dependencies, and run:
 
 ### Windows (PowerShell)
-
 ```powershell
+python -m venv venv
 .\venv\Scripts\Activate.ps1
-```
-
-### Windows (CMD)
-
-```cmd
-.\venv\Scripts\activate.bat
+pip install -r requirements.txt
+python run.py
 ```
 
 ### macOS / Linux
-
 ```bash
+python3 -m venv venv
 source venv/bin/activate
-```
-
-Then:
-
-```bash
 pip install -r requirements.txt
 python run.py
 ```
@@ -170,15 +128,22 @@ The application supports drag-and-drop input files.
 pip install pyinstaller
 ```
 
-### Windows Build
+### Windows
+
+```cmd
+pyinstaller --onefile --windowed --name "Document Converter" --icon=favicon.ico run.py
+```
+
+### macOS
 
 ```bash
-pyinstaller ^
-  --onefile ^
-  --windowed ^
-  --name "Document Converter" ^
-  --icon=favicon.ico ^
-  run.py
+pyinstaller --onefile --windowed --name "Document Converter" run.py
+```
+
+### Linux
+
+```bash
+pyinstaller --onefile --name "Document Converter" run.py
 ```
 
 Build output:
@@ -201,6 +166,10 @@ DocumentConvertTool/
 │   │   ├── extractors.py
 │   │   └── converters.py
 │   │
+│   ├── services/
+│   │   ├── conversion_service.py
+│   │   └── file_loader.py
+│   │
 │   ├── ui/
 │   │   └── app.py
 │   │
@@ -214,14 +183,16 @@ DocumentConvertTool/
 
 ### Directory Overview
 
-| Path                     | Purpose                      |
-| ------------------------ | ---------------------------- |
-| `src/main.py`            | Application bootstrap        |
-| `src/core/extractors.py` | Office → Markdown extraction |
-| `src/core/converters.py` | Markdown → Office conversion |
-| `src/ui/app.py`          | Main GUI                     |
-| `src/utils/env.py`       | Environment helpers          |
-| `run.py`                 | Launcher script              |
+| Path                     | Purpose                              |
+| ------------------------ | ------------------------------------ |
+| `src/main.py`            | Application entry point & initialization |
+| `src/core/extractors.py` | Office → Markdown extraction         |
+| `src/core/converters.py` | Markdown → Office conversion         |
+| `src/services/conversion_service.py` | Conversion and validation service |
+| `src/services/file_loader.py` | File ingestion and extraction service |
+| `src/ui/app.py`          | Main GUI                             |
+| `src/utils/env.py`       | UTF-8 encoding & Tcl/Tk path configuration |
+| `run.py`                 | Launcher script                      |
 
 ---
 
@@ -235,40 +206,56 @@ DocumentConvertTool/
 | openpyxl      | Excel export/import      |
 | python-docx   | Word document generation |
 | mammoth       | Word document extraction |
+| markdown2     | Markdown → HTML conversion |
 
 ---
 
 ## Roadmap
 
-### P0 — Stabilization
+### ✅ P0 — Stabilization (Completed)
 
-* [ ] Fix drag & drop path parser
-* [ ] File extension validation
-* [ ] Overwrite confirmation
-* [ ] Dependency fallback handling
-* [ ] File size warning
+* [x] Fix drag & drop path parser
+* [x] File extension validation
+* [x] Overwrite confirmation
+* [x] Dependency fallback handling
+* [x] File size warning
+* [x] Progress indicator
+* [x] Unsaved changes warning
+* [x] Word → Markdown: images replaced with [image] placeholder
 
 ### Phase 1 — UX Improvements
 
-* [ ] Progress indicator
-* [ ] Smart table validator
 * [ ] CSV ↔ Markdown support
+* [ ] Smart table validator
+* [ ] Search & replace panel
 * [ ] Markdown syntax highlighting
+* [ ] Autosave draft (restore when reopening app)
 
 ### Phase 2 — Format Expansion
 
-* [ ] HTML export engine
-* [ ] HTML preview
+* [ ] CSV → Markdown (extract like Excel)
+* [ ] HTML export (with GitHub Markdown CSS styling)
+* [ ] HTML preview in editor
+* [ ] PDF → Markdown (requires Java 11+)
+* [ ] Markdown → PDF (weasyprint)
+
+### Phase 3 — Polish & Release
+
 * [ ] Batch conversion
-* [ ] Search & replace panel
-
-### Phase 3 — Advanced Features
-
 * [ ] Resizable window
 * [ ] Multi-document tabs
-* [ ] PDF export
-* [ ] Conversion presets
-* [ ] Plugin / converter API
+* [ ] Conversion presets (save frequently-used conversion configs)
+* [ ] v1.0 executable release (PyInstaller)
+
+---
+
+## Known Limitations
+
+* **Large files:** File preview is truncated at 500KB to prevent UI lag. Full content will still be converted.
+* **Word documents with images:** Images are replaced with `[image]` placeholder text since inline image handling in Markdown is limited.
+* **Complex Word formatting:** Some advanced Word styles (columns, text boxes, etc.) may not be fully preserved in Markdown conversion.
+* **PDF support:** Coming in Phase 2. PDF import requires Java 11+, PDF export uses weasyprint.
+* **CSV support:** Coming in Phase 1.
 
 ---
 
