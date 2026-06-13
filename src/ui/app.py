@@ -12,12 +12,6 @@ except ImportError:
 
 # Safety checks for critical document library dependencies to prevent crashes
 try:
-    import mammoth
-    HAS_MAMMOTH = True
-except ImportError:
-    HAS_MAMMOTH = False
-
-try:
     import openpyxl
     HAS_OPENPYXL = True
 except ImportError:
@@ -39,11 +33,16 @@ MODE_DEPENDENCIES = {
     "MD -> Excel":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
     "MD -> Word":   [("python-docx", HAS_DOCX)],
     "Excel -> MD":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
-    "Word -> MD":   [("mammoth", HAS_MAMMOTH)],
+    "Word -> MD":   [("python-docx", HAS_DOCX)],
 }
 
 from src.core.extractors import extract_excel_to_md, extract_word_to_md
 from src.core.converters import md_to_excel_from_text, md_to_word_from_text, save_markdown_from_text
+
+# ── Configuration constants ───────────────────────────────────────────────────
+
+# Giới hạn kích cỡ hiển thị trong textbox editor (500KB = ~500,000 ký tự)
+EDITOR_DISPLAY_LIMIT = 500_000
 
 # ── Conversion modes config ───────────────────────────────────────────────────
 
@@ -72,16 +71,37 @@ class App(BaseClass): # type: ignore
     def __init__(self):
         super().__init__()
         self.title("Document Converter Workspace")
-        self.geometry("1200x780")
+        
+        # Thiết lập kích thước cửa sổ phù hợp với nhiều loại màn hình (đặc biệt là laptop)
+        window_width = 1150
+        window_height = 680
+        
+        try:
+            screen_width = self.winfo_screenwidth()
+            screen_height = self.winfo_screenheight()
+            x = (screen_width - window_width) // 2
+            y = (screen_height - window_height) // 2
+            # Đảm bảo y không bị âm và nhấc lên một chút để tránh taskbar
+            y = max(y - 20, 15)
+            self.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        except Exception:
+            self.geometry(f"{window_width}x{window_height}")
+            
         self.resizable(True, True)
         
         # Configure app-wide variables
         self.in_path = ctk.StringVar()
         self.out_path = ctk.StringVar()
         self.mode_var = ctk.StringVar(value="MD -> Excel")
+        self.full_content = ""  # Lưu toàn bộ content khi tải file lớn
+        self.is_preview_blocked = False
+        self.is_dirty = False
+        self.is_processing = False
         
         self._build_ui()
         self._on_mode_change()
+        
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _build_ui(self):
         # Grid Configuration for main workspace
@@ -109,8 +129,8 @@ class App(BaseClass): # type: ignore
         # 2. Main Workspace Split (Left Pane & Right Pane)
         workspace = ctk.CTkFrame(self, fg_color="transparent")
         workspace.grid(row=1, column=0, sticky="nsew", padx=15, pady=15)
-        workspace.columnconfigure(0, weight=6) # Left Pane gets more weight
-        workspace.columnconfigure(1, weight=5) # Right Pane
+        workspace.columnconfigure(0, weight=6, uniform="workspace_split") # Left Pane gets more weight
+        workspace.columnconfigure(1, weight=5, uniform="workspace_split") # Right Pane
         workspace.rowconfigure(0, weight=1)
 
         # ── LEFT PANE: Input Editor & Overview ────────────────────────────────
@@ -128,8 +148,8 @@ class App(BaseClass): # type: ignore
         )
         editor_title.grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
 
-        # File Load Area / Drag Zone
-        self.load_bar = ctk.CTkFrame(left_pane, fg_color="#1c1c24", corner_radius=8, height=45)
+        # File Load Area / Drag Zone (with subtle border for drag enter/leave highlights)
+        self.load_bar = ctk.CTkFrame(left_pane, fg_color="#1c1c24", corner_radius=8, height=45, border_width=1, border_color="#2c2c35")
         self.load_bar.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
         self.load_bar.pack_propagate(False)
         
@@ -139,18 +159,20 @@ class App(BaseClass): # type: ignore
         )
         self.drop_lbl.pack(side="left", padx=15, fill="both", expand=True)
 
-        btn_browse_in = ctk.CTkButton(
+        self.btn_browse_in = ctk.CTkButton(
             self.load_bar, text="Browse", width=75, height=28,
             font=ctk.CTkFont(family="Arial", size=12, weight="bold"), fg_color="#2980b9", hover_color="#3498db",
             command=self._browse_input
         )
-        btn_browse_in.pack(side="right", padx=8, pady=8)
+        self.btn_browse_in.pack(side="right", padx=8, pady=8)
 
-        # Register Drag & Drop
+        # Register Drag & Drop with active drag hover animations
         if HAS_DND:
             for w in (self.load_bar, self.drop_lbl):
                 w.drop_target_register(DND_FILES) # type: ignore
                 w.dnd_bind("<<Drop>>", self._on_drop) # type: ignore
+                w.dnd_bind("<<DragEnter>>", self._on_drag_enter) # type: ignore
+                w.dnd_bind("<<DragLeave>>", self._on_drag_leave) # type: ignore
 
         # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
@@ -184,26 +206,26 @@ class App(BaseClass): # type: ignore
         )
         self.word_lbl.pack(side="left", padx=5)
 
-        btn_clear = ctk.CTkButton(
+        self.btn_clear = ctk.CTkButton(
             editor_footer, text="Clear All", width=70, height=24, fg_color="#c0392b", hover_color="#e74c3c",
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
             command=self._clear_editor
         )
-        btn_clear.pack(side="right", padx=5)
+        self.btn_clear.pack(side="right", padx=5)
 
-        btn_redo = ctk.CTkButton(
+        self.btn_redo = ctk.CTkButton(
             editor_footer, text="Redo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
             command=self._redo
         )
-        btn_redo.pack(side="right", padx=5)
+        self.btn_redo.pack(side="right", padx=5)
 
-        btn_undo = ctk.CTkButton(
+        self.btn_undo = ctk.CTkButton(
             editor_footer, text="Undo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
             command=self._undo
         )
-        btn_undo.pack(side="right", padx=5)
+        self.btn_undo.pack(side="right", padx=5)
 
 
         # ── RIGHT PANE: Output Configuration, Preview & Actions ───────────────
@@ -249,12 +271,12 @@ class App(BaseClass): # type: ignore
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
         
-        btn_browse_out = ctk.CTkButton(
+        self.btn_browse_out = ctk.CTkButton(
             row_out, text="Browse", width=65, height=28,
             font=ctk.CTkFont(family="Arial", size=11, weight="bold"), fg_color="#2980b9", hover_color="#3498db",
             command=self._browse_output
         )
-        btn_browse_out.pack(side="right", padx=2)
+        self.btn_browse_out.pack(side="right", padx=2)
 
         # Output Preview & Logs Workspace
         self.preview_box = ctk.CTkTextbox(
@@ -288,7 +310,7 @@ class App(BaseClass): # type: ignore
         )
         self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(5, 0), pady=(0, 5))
 
-        self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", height=8, progress_color="#2ecc71")
+        self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", width=10, height=8, progress_color="#2ecc71")
         # Kept hidden initially until conversion begins
 
         self.status_lbl = ctk.CTkLabel(
@@ -337,16 +359,28 @@ class App(BaseClass): # type: ignore
                 self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
 
     def _clear_editor(self):
+        if self.is_processing:
+            return
+        self.editor.configure(state="normal", text_color="#f8f8f2") # Mở khóa editor và đặt lại màu chữ
         self.editor.delete("1.0", "end")
         self.editor.edit_reset()  # Reset undo stack after manual clearing
         self.in_path.set("")
+        self.full_content = ""  # Xóa toàn bộ content
+        self.is_preview_blocked = False
+        self.is_dirty = False
         self._update_counts()
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
         self._set_status("Editor cleared", "gray")
         self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color="#7eb8f5")
 
-    def _update_counts(self, _=None):
-        content = self.editor.get("1.0", "end-1c")
+    def _update_counts(self, event=None):
+        # Dùng full_content nếu file lớn hoặc bị chặn preview, nếu không thì lấy từ editor
+        is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
+        content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
+        
+        if event is not None:
+            self.is_dirty = True
+            
         chars = len(content)
         words = len(content.split())
         self.char_lbl.configure(text=f"Characters: {chars}")
@@ -367,9 +401,43 @@ class App(BaseClass): # type: ignore
         target_color = hex_colors.get(color, color)
         self.status_lbl.configure(text=msg, text_color=target_color)
 
+    def _toggle_ui_state(self, enabled: bool):
+        self.is_processing = not enabled
+        state = "normal" if enabled else "disabled"
+        
+        if enabled:
+            mode = self.mode_var.get()
+            missing = [name for name, available in MODE_DEPENDENCIES[mode] if not available]
+            if missing:
+                self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
+            else:
+                self.btn_convert.configure(state="normal", fg_color="#2ecc71", text="CONVERT & SAVE")
+        else:
+            self.btn_convert.configure(state="disabled")
+
+        self.btn_browse_in.configure(state=state)
+        self.btn_clear.configure(state=state)
+        self.btn_undo.configure(state=state)
+        self.btn_redo.configure(state=state)
+        self.mode_menu.configure(state=state)
+        self.entry_out.configure(state=state)
+        self.btn_browse_out.configure(state=state)
+        
+        if not enabled:
+            self.editor.configure(state="disabled")
+        else:
+            is_large_file = self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT
+            if self.is_preview_blocked or is_large_file:
+                self.editor.configure(state="disabled", text_color="#8a8a9e")
+            else:
+                self.editor.configure(state="normal", text_color="#f8f8f2")
+
     # ── Load file on drop or browse ───────────────────────────────────────────
 
     def _on_drop(self, event):
+        if self.is_processing:
+            return
+        self._on_drag_leave(event)  # Reset highlight borders immediately
         raw_data = event.data
         if not raw_data:
             return
@@ -393,8 +461,10 @@ class App(BaseClass): # type: ignore
             self._set_status(f"Loaded first file. Ignored {len(paths)-1} other files.", "orange")
 
     def _browse_input(self):
+        if self.is_processing:
+            return
         # We allow loading any supported document type to auto-detect
-        path = filedialog.askopenfilename(filetypes=[
+        path = filedialog.askopenfilename(parent=self, filetypes=[
             ("Supported Documents", "*.md *.xlsx *.xls *.docx"),
             ("Markdown (*.md)", "*.md"),
             ("Excel (*.xlsx, *.xls)", "*.xlsx *.xls"),
@@ -405,44 +475,49 @@ class App(BaseClass): # type: ignore
             self._load_file_to_editor(path)
 
     def _load_file_to_editor(self, path: str):
-        if not os.path.exists(path):
-            self._set_status("Input file does not exist!", "red")
-            return
-
-        # Check file size warning (>50MB) to prevent UI freezing and high memory usage
-        file_size = os.path.getsize(path)
-        if file_size > 50 * 1024 * 1024:
+        from src.core.validator import validate_file_integrity
+        res = validate_file_integrity(path)
+        if res:
+            self.in_path.set("")
+            self.full_content = ""
+            self.editor.configure(state="normal")
+            self.editor.delete("1.0", "end")  # Clear editor content on load failure
+            short_err, detailed_err = res
+            self.drop_lbl.configure(text=f"Failed: {short_err}", text_color="#e74c3c")
+            self._set_status(f"Load error: {short_err}", "red")
+            self._write_preview(f"LOAD ERROR:\n\n{detailed_err}")
             from tkinter import messagebox
-            file_size_mb = file_size / (1024 * 1024)
-            confirm = messagebox.askyesno(
-                title="Large File Warning",
-                message=f"The selected file '{os.path.basename(path)}' is very large ({file_size_mb:.1f} MB).\n\n"
-                        f"Loading large files may freeze the user interface or consume significant system memory (RAM).\n\n"
-                        f"Are you sure you want to proceed?"
-            )
-            if not confirm:
-                self._set_status("Loading cancelled", "orange")
-                self._write_preview(f"Load Cancelled:\n\nFile '{os.path.basename(path)}' ({file_size_mb:.1f} MB) was not loaded because it exceeds the 50 MB safety threshold.")
-                return
+            messagebox.showerror(parent=self, title="File Ingestion Error", message=detailed_err)
+            return
 
         ext = os.path.splitext(path)[1].lower()
 
         # Enforce dependency validation before attempting ingestion
-        if ext == ".docx" and not HAS_MAMMOTH:
-            self._set_status("Cannot load: mammoth library missing!", "red")
+        if ext == ".docx" and not HAS_DOCX:
+            self.in_path.set("")
+            self.full_content = ""
+            self.editor.configure(state="normal")
+            self.editor.delete("1.0", "end")  # Clear editor content on load failure
+            self.drop_lbl.configure(text="Failed: python-docx missing", text_color="#e74c3c")
+            self._set_status("Cannot load: python-docx library missing!", "red")
             tooltip_msg = f"Load Error:\n" \
                           f"-----------------------------------\n" \
-                          f"The file '{os.path.basename(path)}' requires the 'mammoth' library for extraction, which is not installed.\n\n" \
+                          f"The file '{os.path.basename(path)}' requires the 'python-docx' library for extraction, which is not installed.\n\n" \
                           f"To resolve this, please install it via:\n" \
-                          f"    pip install mammoth"
+                          f"    pip install python-docx"
             self._write_preview(tooltip_msg)
             return
 
         if ext in (".xlsx", ".xls") and (not HAS_OPENPYXL or not HAS_PANDAS):
+            self.in_path.set("")
+            self.full_content = ""
+            self.editor.configure(state="normal")
+            self.editor.delete("1.0", "end")  # Clear editor content on load failure
             missing = []
             if not HAS_PANDAS: missing.append("pandas")
             if not HAS_OPENPYXL: missing.append("openpyxl")
             missing_str = " and ".join(missing)
+            self.drop_lbl.configure(text=f"Failed: {missing_str} missing", text_color="#e74c3c")
             self._set_status(f"Cannot load: {missing_str} missing!", "red")
             tooltip_msg = f"Load Error:\n" \
                           f"-----------------------------------\n" \
@@ -453,11 +528,46 @@ class App(BaseClass): # type: ignore
             self._write_preview(tooltip_msg)
             return
 
+        self.is_preview_blocked = False
+        file_size = os.path.getsize(path)
+        file_size_mb = file_size / (1024 * 1024)
+
+        if file_size > 5 * 1024 * 1024:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                parent=self,
+                title="Large File Preview Option",
+                message=f"The selected file '{os.path.basename(path)}' is larger than 5MB ({file_size_mb:.2f} MB).\n\n"
+                        f"Loading a preview in the editor might cause the application to freeze.\n\n"
+                        f"Do you want to enable the preview?\n\n"
+                        f"- Choose 'Yes' to enable the preview (limited to first 500KB).\n"
+                        f"- Choose 'No' to load the file without editor preview (recommended for performance)."
+            )
+            if not confirm:
+                self.is_preview_blocked = True
+        elif file_size > 1 * 1024 * 1024:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                parent=self,
+                title="File Size Preview Option",
+                message=f"The selected file '{os.path.basename(path)}' is larger than 1MB ({file_size_mb:.2f} MB).\n\n"
+                        f"Loading a preview might take some time.\n\n"
+                        f"Do you want to enable the preview?\n\n"
+                        f"- Choose 'Yes' to enable the preview.\n"
+                        f"- Choose 'No' to load the file without editor preview (keeps performance fast)."
+            )
+            if not confirm:
+                self.is_preview_blocked = True
+
+        self._toggle_ui_state(False)
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
+        self.progress_bar.start()
+
         self._set_status("Loading and extracting file content...", "orange")
 
-        # Update paths
+        # Update paths (Set state to 'Loading' in orange, NOT loaded yet)
         self.in_path.set(path)
-        self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
+        self.drop_lbl.configure(text=f"Loading: {os.path.basename(path)}...", text_color="#e67e22")
 
         def task():
             try:
@@ -474,42 +584,99 @@ class App(BaseClass): # type: ignore
                 elif ext == ".docx":
                     detected_mode = "Word -> MD"
                     content = extract_word_to_md(path)
+                    print(f"[DEBUG] Extracted content size: {len(content):,} chars ({len(content)/1024/1024:.2f} MB)")
                 else:
                     raise ValueError(f"File extension {ext} is not supported!")
 
                 # Update UI on main thread
                 def update_ui():
+                    file_size = os.path.getsize(path)
+                    file_size_mb = file_size / (1024 * 1024)
+
                     if detected_mode:
                         self.mode_var.set(detected_mode)
                         self._on_mode_change()
                     
+                    # Giới hạn hiển thị nếu content quá lớn hoặc bị chặn preview
+                    if self.is_preview_blocked:
+                        display_content = f"[PREVIEW SKIPPED] This file is large ({file_size_mb:.2f} MB). Previewing has been skipped to maintain fast performance. You can still convert and save the file by clicking 'CONVERT & SAVE'."
+                    else:
+                        is_truncated = len(content) > EDITOR_DISPLAY_LIMIT
+                        display_content = content[:EDITOR_DISPLAY_LIMIT] if is_truncated else content
+                    
+                    # Lưu toàn bộ content để dùng khi convert
+                    self.full_content = content
+                    
+                    self.editor.configure(state="normal") # Đảm bảo mở khóa để cho phép xóa/chèn dữ liệu mới
                     self.editor.delete("1.0", "end")
-                    self.editor.insert("1.0", content)
+                    self.editor.insert("1.0", display_content)
                     self.editor.edit_reset()  # Reset undo stack after loading new document content
+                    
+                    self.is_dirty = False
                     self._update_counts()
                     
-                    # Generate Overview log
                     preview_msg = f"LOADED DOCUMENT OVERVIEW:\n" \
                                   f"-----------------------------------\n" \
                                   f"- Filename: {os.path.basename(path)}\n" \
                                   f"- Original format: {ext.upper()}\n" \
-                                  f"- Size: {os.path.getsize(path)} bytes\n" \
-                                  f"- Auto-switched mode: {detected_mode}\n\n" \
-                                  f"You can now read, edit, or delete any character in the left editor. Click 'Browse' in Output to change the save location."
+                                  f"- Size: {file_size_mb:.2f} MB ({file_size:,} bytes)\n" \
+                                  f"- Auto-switched mode: {detected_mode}\n"
+                    
+                    if self.is_preview_blocked:
+                        truncated_size = len(content) / (1024 * 1024)
+                        preview_msg += f"\n🚫  PREVIEW SKIPPED:\n" \
+                                      f"- Full content: {truncated_size:.2f} MB\n" \
+                                      f"- Note: Previewing is skipped to maintain fast performance.\n" \
+                                      f"  The full content will be used when you click 'CONVERT & SAVE'.\n"
+                    elif is_truncated:
+                        truncated_size = len(content) / (1024 * 1024)
+                        display_size = len(display_content) / (1024 * 1024)
+                        preview_msg += f"\n⚠️  PREVIEW TRUNCATED:\n" \
+                                      f"- Full content: {truncated_size:.2f} MB\n" \
+                                      f"- Displayed: {display_size:.2f} MB (first 500KB)\n" \
+                                      f"- Note: Only the first 500KB is shown in the editor for performance.\n" \
+                                      f"  The full content will be used when you click 'CONVERT & SAVE'.\n"
+                    
+                    if not self.is_preview_blocked:
+                        preview_msg += "\nYou can now read, edit, or delete any character in the left editor. Click 'Browse' in Output to change the save location."
+                    else:
+                        preview_msg += "\nPreview is skipped. Click 'Browse' in Output to change the save location and click 'CONVERT & SAVE' to convert the file directly."
                     
                     self._write_preview(preview_msg)
-                    self._set_status("Loaded and extracted successfully!", "green")
-
+                    if self.is_preview_blocked:
+                        self._set_status("Loaded (preview skipped for performance)", "orange")
+                        self.drop_lbl.configure(text=f"Loaded (No preview): {os.path.basename(path)}", text_color="#2ecc71")
+                    else:
+                        self._set_status("Loaded and extracted successfully!" if not is_truncated else "Loaded (preview truncated for performance)", "green")
+                        self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
+                    
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._toggle_ui_state(True)
+ 
                 self.after(0, update_ui)
             except Exception as e:
-                self.after(0, lambda: self._set_status(f"Load error: {e}", "red"))
-                self.after(0, lambda: self._write_preview(f"Load error details:\n{e}"))
+                err_msg = str(e)
+                def update_error():
+                    self.in_path.set("")
+                    self.full_content = ""
+                    self.editor.configure(state="normal")
+                    self.editor.delete("1.0", "end")  # Clear editor content on load failure
+                    self.drop_lbl.configure(text=f"Failed: {err_msg}", text_color="#e74c3c")
+                    self._set_status(f"Load error: {err_msg}", "red")
+                    self._write_preview(f"Load error details:\n{err_msg}")
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self._toggle_ui_state(True)
+                self.after(0, update_error)
 
         threading.Thread(target=task, daemon=True).start()
 
     def _browse_output(self):
+        if self.is_processing:
+            return
         ext = self._cfg()["out_ext"]
-        path = filedialog.asksaveasfilename(
+        path = filedialog.asksaveasfilename(parent=self,
             defaultextension=ext, filetypes=OUT_FILETYPES[ext],
             initialfile=os.path.splitext(os.path.basename(self.in_path.get() or "document"))[0] + ext
         )
@@ -519,7 +686,12 @@ class App(BaseClass): # type: ignore
     # ── Execute Document Generation & Export ─────────────────────────────────
 
     def _run_conversion(self):
-        content = self.editor.get("1.0", "end-1c").strip()
+        if self.is_processing:
+            return
+        # Ưu tiên dùng full_content nếu file lớn (vượt quá giới hạn hiển thị của editor) hoặc bị chặn preview được tải
+        is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
+        content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c").strip()
+        content = content.strip()
         out = self.out_path.get().strip()
         mode = self.mode_var.get()
 
@@ -530,7 +702,45 @@ class App(BaseClass): # type: ignore
             self._set_status("Please choose a save path!", "orange")
             return
 
+        # Cảnh báo nếu converting file lớn (preview chỉ 500KB hoặc bị blocked nhưng convert toàn bộ)
+        if self.full_content and (len(self.full_content) > EDITOR_DISPLAY_LIMIT or self.is_preview_blocked):
+            from tkinter import messagebox
+            full_size_mb = len(self.full_content) / (1024 * 1024)
+            if self.is_preview_blocked:
+                msg_text = f"You are converting a large file ({full_size_mb:.2f} MB).\n\n" \
+                           f"Note: Previewing was blocked for this file, but the entire file will be converted.\n\n" \
+                           f"Do you want to proceed?"
+            else:
+                msg_text = f"You are converting a large file ({full_size_mb:.2f} MB).\n\n" \
+                           f"Note: Only the first 500KB was displayed for preview, but the entire file will be converted.\n\n" \
+                           f"Any edits you made in the preview area will NOT be applied to the full conversion.\n\n" \
+                           f"Do you want to proceed?"
+            confirm = messagebox.askyesno(
+                title="Large File Conversion",
+                message=msg_text
+            )
+            if not confirm:
+                self._set_status("Conversion cancelled", "orange")
+                return
+
         # Validate Markdown tables to prevent malformed data parsing
+        if mode == "MD -> Excel":
+            from src.core.converters import parse_md_tables
+            if not parse_md_tables(content):
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    parent=self,
+                    title="No Tables Found",
+                    message="No tables were found in the Markdown content.\n\n"
+                            "To convert to Excel, your Markdown file must contain at least one table in standard Markdown format, for example:\n\n"
+                            "| Column 1 | Column 2 |\n"
+                            "| --- | --- |\n"
+                            "| Value 1 | Value 2 |\n\n"
+                            "Please ensure there is a separator row (like '|---|') below the header row."
+                )
+                self._set_status("No tables found in content", "red")
+                return
+
         from src.core.validator import validate_md_tables
         warnings = validate_md_tables(content)
         if warnings:
@@ -559,7 +769,23 @@ class App(BaseClass): # type: ignore
                 self._set_status("Conversion cancelled", "orange")
                 return
 
-        self.btn_convert.configure(state="disabled", text="Converting...")
+            # Check if the output file is locked by another application
+            try:
+                with open(out, "r+b") as f:
+                    pass
+            except PermissionError:
+                self._set_status("Output file locked!", "red")
+                messagebox.showerror(
+                    parent=self,
+                    title="File Lock Error",
+                    message=f"The destination file '{os.path.basename(out)}' is currently open or locked by another application (e.g., Microsoft Word or Excel).\n\nPlease close the application holding the file and try again."
+                )
+                return
+            except Exception:
+                pass
+
+        self._toggle_ui_state(False)
+        self.btn_convert.configure(text="Converting...")
         self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
         self._set_status("Processing conversion and writing file...", "orange")
 
@@ -582,34 +808,43 @@ class App(BaseClass): # type: ignore
                 color = "green" if msg.startswith("Exported") or msg.startswith("Word") or msg.startswith("Markdown") else "red"
                 
                 # Output Overview details
-                log_details = f"DOCUMENT EXPORT LOG:\n" \
-                              f"-----------------------------------\n" \
-                              f"- Result: SUCCESS\n" \
-                              f"- Conversion mode: {mode}\n" \
-                              f"- Generated file: {os.path.basename(out)}\n" \
-                              f"- Save folder: {os.path.dirname(out)}\n" \
-                              f"- New size: {os.path.getsize(out) if os.path.exists(out) else 0} bytes\n\n" \
-                              f"Click the 'OPEN CREATED FILE' button below to open and view your document directly!"
+                if color == "red":
+                    log_details = f"DOCUMENT EXPORT LOG:\n" \
+                                  f"-----------------------------------\n" \
+                                  f"- Result: FAILED\n" \
+                                  f"- Conversion mode: {mode}\n\n" \
+                                  f"Error:\n{msg}"
+                else:
+                    log_details = f"DOCUMENT EXPORT LOG:\n" \
+                                  f"-----------------------------------\n" \
+                                  f"- Result: SUCCESS\n" \
+                                  f"- Conversion mode: {mode}\n" \
+                                  f"- Generated file: {os.path.basename(out)}\n" \
+                                  f"- Save folder: {os.path.dirname(out)}\n" \
+                                  f"- New size: {os.path.getsize(out) if os.path.exists(out) else 0} bytes\n\n" \
+                                  f"Click the 'OPEN CREATED FILE' button below to open and view your document directly!"
 
                 def update_success():
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
                     self._write_preview(log_details)
-                    self._set_status(msg, color)
+                    self._set_status(msg.split("\n")[0] if "\n" in msg else msg, color)
+                    self._toggle_ui_state(True)
                     if color == "green":
                         self.btn_open_file.configure(
                             state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
                         )
-                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
+                        self.is_dirty = False
 
                 self.after(0, update_success)
             except Exception as e:
+                err_msg = str(e)
                 def update_error():
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
-                    self._set_status(f"Conversion error: {e}", "red")
-                    self._write_preview(f"Conversion error details:\n{e}")
-                    self.btn_convert.configure(state="normal", text="CONVERT & SAVE")
+                    self._set_status(f"Conversion error: {err_msg}", "red")
+                    self._write_preview(f"Conversion error details:\n{err_msg}")
+                    self._toggle_ui_state(True)
 
                 self.after(0, update_error)
 
@@ -627,6 +862,8 @@ class App(BaseClass): # type: ignore
             self._set_status("File does not exist or has not been created yet!", "orange")
 
     def _undo(self, event=None):
+        if self.is_processing:
+            return "break"
         try:
             self.editor.edit_undo()
         except Exception:
@@ -634,8 +871,45 @@ class App(BaseClass): # type: ignore
         return "break"
 
     def _redo(self, event=None):
+        if self.is_processing:
+            return "break"
         try:
             self.editor.edit_redo()
         except Exception:
             pass
         return "break"
+
+    def _on_drag_enter(self, event):
+        if self.is_processing:
+            return
+        self.load_bar.configure(border_color="#3a86ff", border_width=2)
+        self.drop_lbl.configure(text="Drop the file now!", text_color="#3a86ff")
+
+    def _on_drag_leave(self, event=None):
+        if self.is_processing:
+            return
+        self.load_bar.configure(border_color="#2c2c35", border_width=1)
+        inp = self.in_path.get().strip()
+        if inp:
+            self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(inp)}", text_color="#2ecc71")
+        else:
+            self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color="#7eb8f5")
+
+    def _on_closing(self):
+        if self.is_processing:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                title="Operation in Progress",
+                message="An operation is currently in progress. Exiting may interrupt the process.\n\nAre you sure you want to exit?"
+            )
+            if not confirm:
+                return
+        elif self.is_dirty:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                title="Unsaved Changes",
+                message="You have unsaved changes in the editor.\n\nAre you sure you want to exit?"
+            )
+            if not confirm:
+                return
+        self.destroy()
