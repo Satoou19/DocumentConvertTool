@@ -101,6 +101,7 @@ class App(BaseClass): # type: ignore
         self.out_path = ctk.StringVar()
         self.mode_var = ctk.StringVar(value="MD -> Excel")
         self.full_content = ""  # Lưu toàn bộ content khi tải file lớn
+        self.is_preview_blocked = False
         self.is_dirty = False
         self.is_processing = False
         
@@ -372,6 +373,7 @@ class App(BaseClass): # type: ignore
         self.editor.edit_reset()  # Reset undo stack after manual clearing
         self.in_path.set("")
         self.full_content = ""  # Xóa toàn bộ content
+        self.is_preview_blocked = False
         self.is_dirty = False
         self._update_counts()
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
@@ -379,9 +381,9 @@ class App(BaseClass): # type: ignore
         self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color="#7eb8f5")
 
     def _update_counts(self, event=None):
-        # Dùng full_content nếu file lớn, nếu không thì lấy từ editor
-        is_large_file = self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT
-        content = self.full_content if is_large_file else self.editor.get("1.0", "end-1c")
+        # Dùng full_content nếu file lớn hoặc bị chặn preview, nếu không thì lấy từ editor
+        is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
+        content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
         
         if event is not None:
             self.is_dirty = True
@@ -432,7 +434,7 @@ class App(BaseClass): # type: ignore
             self.editor.configure(state="disabled")
         else:
             is_large_file = self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT
-            if is_large_file:
+            if self.is_preview_blocked or is_large_file:
                 self.editor.configure(state="disabled", text_color="#8a8a9e")
             else:
                 self.editor.configure(state="normal", text_color="#f8f8f2")
@@ -508,6 +510,37 @@ class App(BaseClass): # type: ignore
                 messagebox.showerror(parent=self, title="File Ingestion Error", message=detailed_err)
             return
 
+        self.is_preview_blocked = False
+        file_size = os.path.getsize(path)
+        file_size_mb = file_size / (1024 * 1024)
+
+        if file_size > 5 * 1024 * 1024:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                parent=self,
+                title="Large File Preview Option",
+                message=f"The selected file '{os.path.basename(path)}' is larger than 5MB ({file_size_mb:.2f} MB).\n\n"
+                        f"Loading a preview in the editor might cause the application to freeze.\n\n"
+                        f"Do you want to enable the preview?\n\n"
+                        f"- Choose 'Yes' to enable the preview (limited to first 500KB).\n"
+                        f"- Choose 'No' to load the file without editor preview (recommended for performance)."
+            )
+            if not confirm:
+                self.is_preview_blocked = True
+        elif file_size > 1 * 1024 * 1024:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                parent=self,
+                title="File Size Preview Option",
+                message=f"The selected file '{os.path.basename(path)}' is larger than 1MB ({file_size_mb:.2f} MB).\n\n"
+                        f"Loading a preview might take some time.\n\n"
+                        f"Do you want to enable the preview?\n\n"
+                        f"- Choose 'Yes' to enable the preview.\n"
+                        f"- Choose 'No' to load the file without editor preview (keeps performance fast)."
+            )
+            if not confirm:
+                self.is_preview_blocked = True
+
         self._toggle_ui_state(False)
         self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
         self.progress_bar.start()
@@ -532,13 +565,19 @@ class App(BaseClass): # type: ignore
 
                 # Update UI on main thread
                 def update_ui():
+                    file_size = os.path.getsize(path)
+                    file_size_mb = file_size / (1024 * 1024)
+
                     if detected_mode:
                         self.mode_var.set(detected_mode)
                         self._on_mode_change()
                     
-                    # Giới hạn hiển thị nếu content quá lớn
-                    is_truncated = len(content) > EDITOR_DISPLAY_LIMIT
-                    display_content = content[:EDITOR_DISPLAY_LIMIT] if is_truncated else content
+                    # Giới hạn hiển thị nếu content quá lớn hoặc bị chặn preview
+                    if self.is_preview_blocked:
+                        display_content = f"[PREVIEW SKIPPED] This file is large ({file_size_mb:.2f} MB). Previewing has been skipped to maintain fast performance. You can still convert and save the file by clicking 'CONVERT & SAVE'."
+                    else:
+                        is_truncated = len(content) > EDITOR_DISPLAY_LIMIT
+                        display_content = content[:EDITOR_DISPLAY_LIMIT] if is_truncated else content
                     
                     # Lưu toàn bộ content để dùng khi convert
                     self.full_content = content
@@ -551,10 +590,6 @@ class App(BaseClass): # type: ignore
                     self.is_dirty = False
                     self._update_counts()
                     
-                    # Generate Overview log
-                    file_size = os.path.getsize(path)
-                    file_size_mb = file_size / (1024 * 1024)
-                    
                     preview_msg = f"LOADED DOCUMENT OVERVIEW:\n" \
                                   f"-----------------------------------\n" \
                                   f"- Filename: {os.path.basename(path)}\n" \
@@ -562,7 +597,13 @@ class App(BaseClass): # type: ignore
                                   f"- Size: {file_size_mb:.2f} MB ({file_size:,} bytes)\n" \
                                   f"- Auto-switched mode: {detected_mode}\n"
                     
-                    if is_truncated:
+                    if self.is_preview_blocked:
+                        truncated_size = len(content) / (1024 * 1024)
+                        preview_msg += f"\n🚫  PREVIEW SKIPPED:\n" \
+                                      f"- Full content: {truncated_size:.2f} MB\n" \
+                                      f"- Note: Previewing is skipped to maintain fast performance.\n" \
+                                      f"  The full content will be used when you click 'CONVERT & SAVE'.\n"
+                    elif is_truncated:
                         truncated_size = len(content) / (1024 * 1024)
                         display_size = len(display_content) / (1024 * 1024)
                         preview_msg += f"\n⚠️  PREVIEW TRUNCATED:\n" \
@@ -571,16 +612,23 @@ class App(BaseClass): # type: ignore
                                       f"- Note: Only the first 500KB is shown in the editor for performance.\n" \
                                       f"  The full content will be used when you click 'CONVERT & SAVE'.\n"
                     
-                    preview_msg += "\nYou can now read, edit, or delete any character in the left editor. Click 'Browse' in Output to change the save location."
+                    if not self.is_preview_blocked:
+                        preview_msg += "\nYou can now read, edit, or delete any character in the left editor. Click 'Browse' in Output to change the save location."
+                    else:
+                        preview_msg += "\nPreview is skipped. Click 'Browse' in Output to change the save location and click 'CONVERT & SAVE' to convert the file directly."
                     
                     self._write_preview(preview_msg)
-                    self._set_status("Loaded and extracted successfully!" if not is_truncated else "Loaded (preview truncated for performance)", "green")
-                    self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
+                    if self.is_preview_blocked:
+                        self._set_status("Loaded (preview skipped for performance)", "orange")
+                        self.drop_lbl.configure(text=f"Loaded (No preview): {os.path.basename(path)}", text_color="#2ecc71")
+                    else:
+                        self._set_status("Loaded and extracted successfully!" if not is_truncated else "Loaded (preview truncated for performance)", "green")
+                        self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
                     
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
                     self._toggle_ui_state(True)
-
+ 
                 self.after(0, update_ui)
             except Exception as e:
                 err_msg = str(e)
@@ -615,9 +663,9 @@ class App(BaseClass): # type: ignore
     def _run_conversion(self):
         if self.is_processing:
             return
-        # Ưu tiên dùng full_content nếu file lớn (vượt quá giới hạn hiển thị của editor) được tải
-        is_large_file = self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT
-        content = self.full_content if is_large_file else self.editor.get("1.0", "end-1c").strip()
+        # Ưu tiên dùng full_content nếu file lớn (vượt quá giới hạn hiển thị của editor) hoặc bị chặn preview được tải
+        is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
+        content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c").strip()
         content = content.strip()
         out = self.out_path.get().strip()
         mode = self.mode_var.get()
@@ -629,16 +677,22 @@ class App(BaseClass): # type: ignore
             self._set_status("Please choose a save path!", "orange")
             return
 
-        # Cảnh báo nếu converting file lớn (preview chỉ 500KB nhưng convert toàn bộ)
-        if self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT:
+        # Cảnh báo nếu converting file lớn (preview chỉ 500KB hoặc bị blocked nhưng convert toàn bộ)
+        if self.full_content and (len(self.full_content) > EDITOR_DISPLAY_LIMIT or self.is_preview_blocked):
             from tkinter import messagebox
             full_size_mb = len(self.full_content) / (1024 * 1024)
+            if self.is_preview_blocked:
+                msg_text = f"You are converting a large file ({full_size_mb:.2f} MB).\n\n" \
+                           f"Note: Previewing was blocked for this file, but the entire file will be converted.\n\n" \
+                           f"Do you want to proceed?"
+            else:
+                msg_text = f"You are converting a large file ({full_size_mb:.2f} MB).\n\n" \
+                           f"Note: Only the first 500KB was displayed for preview, but the entire file will be converted.\n\n" \
+                           f"Any edits you made in the preview area will NOT be applied to the full conversion.\n\n" \
+                           f"Do you want to proceed?"
             confirm = messagebox.askyesno(
                 title="Large File Conversion",
-                message=f"You are converting a large file ({full_size_mb:.2f} MB).\n\n"
-                        f"Note: Only the first 500KB was displayed for preview, but the entire file will be converted.\n\n"
-                        f"Any edits you made in the preview area will NOT be applied to the full conversion.\n\n"
-                        f"Do you want to proceed?"
+                message=msg_text
             )
             if not confirm:
                 self._set_status("Conversion cancelled", "orange")
