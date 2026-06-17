@@ -207,3 +207,23 @@ def save_markdown_from_text(content: str, out_path: str) -> str:
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(content)
     return f"Markdown file saved successfully -> {os.path.basename(out_path)}"
+
+
+def md_to_csv_from_text(content: str, out_path: str) -> str:
+    """Converts the first Markdown table from the content text into a CSV file."""
+    tables = parse_md_tables(content)
+    if not tables:
+        return (
+            "No tables found in the Markdown content.\n\n"
+            "To convert to CSV, please ensure your Markdown content has tables that follow the standard Markdown format, for example:\n\n"
+            "| Column 1 | Column 2 |\n"
+            "| --- | --- |\n"
+            "| Value 1 | Value 2 |\n\n"
+            "Make sure you include the separator row (the line with dashes like '| --- | --- |') below the header row."
+        )
+    
+    # Save the first parsed table
+    name, df = tables[0]
+    df.to_csv(out_path, index=False, encoding="utf-8-sig")
+    return f"Exported table successfully to CSV -> {os.path.basename(out_path)}"
+

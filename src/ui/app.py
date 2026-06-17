@@ -34,8 +34,10 @@ except ImportError:
 MODE_DEPENDENCIES = {
     "MD -> Excel":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
     "MD -> Word":   [("python-docx", HAS_DOCX)],
+    "MD -> CSV":    [("pandas", HAS_PANDAS)],
     "Excel -> MD":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
     "Word -> MD":   [("python-docx", HAS_DOCX)],
+    "CSV -> MD":    [("pandas", HAS_PANDAS)],
 }
 
 from src.services.file_loader import load_document
@@ -56,20 +58,24 @@ EDITOR_DISPLAY_LIMIT = 500_000
 MODES = {
     "MD -> Excel":  {"in_ext": ".md",   "out_ext": ".xlsx", "in_label": "File .md",   "out_label": "Save .xlsx"},
     "MD -> Word":   {"in_ext": ".md",   "out_ext": ".docx", "in_label": "File .md",   "out_label": "Save .docx"},
+    "MD -> CSV":    {"in_ext": ".md",   "out_ext": ".csv",  "in_label": "File .md",   "out_label": "Save .csv"},
     "Excel -> MD":  {"in_ext": ".xlsx", "out_ext": ".md",   "in_label": "File .xlsx", "out_label": "Save .md"},
     "Word -> MD":   {"in_ext": ".docx", "out_ext": ".md",   "in_label": "File .docx", "out_label": "Save .md"},
+    "CSV -> MD":    {"in_ext": ".csv",  "out_ext": ".md",   "in_label": "File .csv",  "out_label": "Save .md"},
 }
 
 IN_FILETYPES = {
     ".md":   [("Markdown", "*.md"), ("All Files", "*.*")],
     ".xlsx": [("Excel", "*.xlsx *.xls"), ("All Files", "*.*")],
     ".docx": [("Word", "*.docx"), ("All Files", "*.*")],
+    ".csv":  [("CSV", "*.csv"), ("All Files", "*.*")],
 }
 
 OUT_FILETYPES = {
     ".xlsx": [("Excel", "*.xlsx")],
     ".docx": [("Word",  "*.docx")],
     ".md":   [("Markdown", "*.md")],
+    ".csv":  [("CSV", "*.csv")],
 }
 
 BaseClass = TkinterDnD.Tk if HAS_DND else ctk.CTk
@@ -516,10 +522,11 @@ class App(BaseClass): # type: ignore
             return
         # We allow loading any supported document type to auto-detect
         path = filedialog.askopenfilename(parent=self, filetypes=[
-            ("Supported Documents", "*.md *.xlsx *.xls *.docx"),
+            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv"),
             ("Markdown (*.md)", "*.md"),
             ("Excel (*.xlsx, *.xls)", "*.xlsx *.xls"),
             ("Word (*.docx)", "*.docx"),
+            ("CSV (*.csv)", "*.csv"),
             ("All Files", "*.*")
         ])
         if path:
@@ -743,14 +750,14 @@ class App(BaseClass): # type: ignore
                 return
 
         # Validate Markdown tables to prevent malformed data parsing
-        if mode == "MD -> Excel":
+        if mode in ("MD -> Excel", "MD -> CSV"):
             if not has_md_tables(content):
                 from tkinter import messagebox
                 messagebox.showwarning(
                     parent=self,
                     title="No Tables Found",
                     message="No tables were found in the Markdown content.\n\n"
-                            "To convert to Excel, your Markdown file must contain at least one table in standard Markdown format, for example:\n\n"
+                            "To convert to Excel or CSV, your Markdown file must contain at least one table in standard Markdown format, for example:\n\n"
                             "| Column 1 | Column 2 |\n"
                             "| --- | --- |\n"
                             "| Value 1 | Value 2 |\n\n"

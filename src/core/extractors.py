@@ -134,3 +134,28 @@ def extract_word_to_md(in_path: str) -> str:
         error_msg = f"⚠️ Word Extraction Error:\n\nDetails: {str(e)}\n\nFile: {in_path}"
         print(f"[ERROR] extract_word_to_md: {error_msg}")
         return error_msg
+
+
+def extract_csv_to_md(in_path: str) -> str:
+    """Extracts CSV table into clean Markdown table."""
+    import pandas as pd
+    try:
+        # Read using utf-8-sig to preserve BOM and unicode text (e.g. Vietnamese)
+        df = pd.read_csv(in_path, encoding="utf-8-sig", keep_default_na=False)
+        if df.empty:
+            return "*(Empty Table)*"
+        
+        parts = []
+        # Generate Markdown Table representation
+        header = "| " + " | ".join(str(c) for c in df.columns) + " |"
+        sep    = "| " + " | ".join("---" for _ in df.columns) + " |"
+        parts.append(header)
+        parts.append(sep)
+        for _, row in df.iterrows():
+            parts.append("| " + " | ".join(str(v).replace("\n", " ") for v in row) + " |")
+        return "\n".join(parts)
+    except Exception as e:
+        error_msg = f"⚠️ CSV Extraction Error:\n\nDetails: {str(e)}\n\nFile: {in_path}"
+        print(f"[ERROR] extract_csv_to_md: {error_msg}")
+        return error_msg
+

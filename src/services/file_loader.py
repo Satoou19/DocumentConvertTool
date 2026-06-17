@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional
 
-from src.core.extractors import extract_excel_to_md, extract_word_to_md
+from src.core.extractors import extract_excel_to_md, extract_word_to_md, extract_csv_to_md
 from src.core.validator import validate_file_integrity
 
 try:
@@ -45,6 +45,9 @@ def get_missing_dependencies_for_path(path: str) -> List[str]:
     elif ext == ".docx":
         if not HAS_DOCX:
             missing.append("python-docx")
+    elif ext == ".csv":
+        if not HAS_PANDAS:
+            missing.append("pandas")
     return missing
 
 
@@ -76,6 +79,9 @@ def load_document(path: str) -> LoadResult:
         elif ext == ".docx":
             mode = "Word -> MD"
             content = extract_word_to_md(path)
+        elif ext == ".csv":
+            mode = "CSV -> MD"
+            content = extract_csv_to_md(path)
         else:
             return LoadResult(False, error_short="Unsupported extension", error_detail=f"File extension {ext} is not supported.")
     except Exception as exc:

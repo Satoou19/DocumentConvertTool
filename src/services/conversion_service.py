@@ -6,6 +6,7 @@ from src.core.converters import (
     md_to_word_from_text,
     save_markdown_from_text,
     parse_md_tables,
+    md_to_csv_from_text,
 )
 from src.core.validator import validate_md_tables
 
@@ -35,6 +36,8 @@ def convert_content(mode: str, content: str, out_path: str) -> str:
         return md_to_excel_from_text(content, out_path)
     if mode == "MD -> Word":
         return md_to_word_from_text(content, out_path)
-    if mode in ("Excel -> MD", "Word -> MD"):
+    if mode == "MD -> CSV":
+        return md_to_csv_from_text(content, out_path)
+    if mode in ("Excel -> MD", "Word -> MD", "CSV -> MD"):
         return save_markdown_from_text(content, out_path)
     raise ValueError(f"Invalid mode {mode}!")

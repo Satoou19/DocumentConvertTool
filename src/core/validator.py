@@ -83,10 +83,10 @@ def validate_file_integrity(path: str) -> tuple[str, str] | None:
         return ("File does not exist", "The selected file does not exist. Please check the file path.")
 
     ext = os.path.splitext(path)[1].lower()
-    if ext not in (".md", ".docx", ".xlsx", ".xls"):
+    if ext not in (".md", ".docx", ".xlsx", ".xls", ".csv"):
         return (
             "Unsupported file extension",
-            f"The file extension '{ext}' is not supported. Please select a valid document file (.md, .docx, .xlsx, .xls)."
+            f"The file extension '{ext}' is not supported. Please select a valid document file (.md, .docx, .xlsx, .xls, .csv)."
         )
 
     # 1. Check if the file is locked / open in another application
