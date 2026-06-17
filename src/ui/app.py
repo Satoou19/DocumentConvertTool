@@ -105,6 +105,11 @@ class App(BaseClass): # type: ignore
         self.is_dirty = False
         self.is_processing = False
         
+        # Search & Replace panel variables
+        self.matches = []
+        self.current_match_idx = -1
+        self.search_panel_visible = False
+        
         self._build_ui()
         self._on_mode_change()
         
@@ -145,8 +150,9 @@ class App(BaseClass): # type: ignore
         left_pane.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=0)
         left_pane.rowconfigure(0, weight=0) # Label
         left_pane.rowconfigure(1, weight=0) # Drag Drop Info
-        left_pane.rowconfigure(2, weight=1) # Textbox Editor
-        left_pane.rowconfigure(3, weight=0) # Footer stats
+        left_pane.rowconfigure(2, weight=0) # Search & Replace Panel (collapsible)
+        left_pane.rowconfigure(3, weight=1) # Textbox Editor
+        left_pane.rowconfigure(4, weight=0) # Footer stats
         left_pane.columnconfigure(0, weight=1)
 
         editor_title = ctk.CTkLabel(
@@ -188,8 +194,12 @@ class App(BaseClass): # type: ignore
             border_width=1, border_color="#2c2c35", corner_radius=8,
             undo=True
         )
-        self.editor.grid(row=2, column=0, sticky="nsew", padx=15, pady=8)
+        self.editor.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
         self.editor.bind("<KeyRelease>", self._update_counts)
+
+        # Register highlight tags for search
+        self.editor._textbox.tag_config("search_highlight", background="#415b76", foreground="#ffffff")
+        self.editor._textbox.tag_config("active_highlight", background="#f39c12", foreground="#ffffff")
 
         # Bind custom Undo/Redo events to catch exceptions and prevent duplicate actions
         self.editor.bind("<Control-z>", self._undo)
@@ -201,7 +211,7 @@ class App(BaseClass): # type: ignore
 
         # Editor Footer (Stats & Actions)
         editor_footer = ctk.CTkFrame(left_pane, fg_color="transparent")
-        editor_footer.grid(row=3, column=0, sticky="ew", padx=15, pady=(5, 12))
+        editor_footer.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
         
         self.char_lbl = ctk.CTkLabel(
             editor_footer, text="Characters: 0", font=ctk.CTkFont(family="Arial", size=12), text_color="#8a8a9e"
@@ -219,6 +229,13 @@ class App(BaseClass): # type: ignore
             command=self._clear_editor
         )
         self.btn_clear.pack(side="right", padx=5)
+
+        self.btn_find_replace = ctk.CTkButton(
+            editor_footer, text="Find & Replace", width=95, height=24, fg_color="#34495e", hover_color="#415b76",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._toggle_search_panel
+        )
+        self.btn_find_replace.pack(side="right", padx=5)
 
         self.btn_redo = ctk.CTkButton(
             editor_footer, text="Redo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
@@ -325,6 +342,21 @@ class App(BaseClass): # type: ignore
         )
         self.status_lbl.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0))
 
+        # Build search and replace panel
+        self._build_search_panel(left_pane)
+        
+        # Bind keyboard shortcuts on the editor widget
+        self.editor.bind("<Control-f>", self._shortcut_find)
+        self.editor.bind("<Control-F>", self._shortcut_find)
+        self.editor.bind("<Control-h>", self._shortcut_replace)
+        self.editor.bind("<Control-H>", self._shortcut_replace)
+        
+        # Bind keyboard shortcuts globally on the main app window
+        self.bind("<Control-f>", self._shortcut_find)
+        self.bind("<Control-F>", self._shortcut_find)
+        self.bind("<Control-h>", self._shortcut_replace)
+        self.bind("<Control-H>", self._shortcut_replace)
+
     # ── Internal Actions & Event Handlers ─────────────────────────────────────
 
     def _cfg(self):
@@ -387,6 +419,8 @@ class App(BaseClass): # type: ignore
         
         if event is not None:
             self.is_dirty = True
+            if self.search_panel_visible:
+                self._perform_search(keep_current_index=True)
             
         chars = len(content)
         words = len(content.split())
@@ -430,6 +464,16 @@ class App(BaseClass): # type: ignore
         self.entry_out.configure(state=state)
         self.btn_browse_out.configure(state=state)
         
+        if hasattr(self, "search_entry"):
+            self.search_entry.configure(state=state)
+            self.replace_entry.configure(state=state)
+            self.btn_prev.configure(state=state)
+            self.btn_next.configure(state=state)
+            self.btn_close_search.configure(state=state)
+            self.btn_replace.configure(state=state)
+            self.btn_replace_all.configure(state=state)
+            self.btn_find_replace.configure(state=state)
+            
         if not enabled:
             self.editor.configure(state="disabled")
         else:
@@ -884,3 +928,243 @@ class App(BaseClass): # type: ignore
             if not confirm:
                 return
         self.destroy()
+
+    def _build_search_panel(self, parent_pane):
+        self.search_frame = ctk.CTkFrame(parent_pane, fg_color="#1c1c24", corner_radius=8, border_width=1, border_color="#2c2c35")
+        
+        self.search_frame.columnconfigure(0, weight=0) # Labels
+        self.search_frame.columnconfigure(1, weight=1) # Entries
+        self.search_frame.columnconfigure(2, weight=0) # Controls / Action buttons
+        
+        self.search_query_var = ctk.StringVar()
+        
+        # Row 0: Find
+        find_lbl = ctk.CTkLabel(self.search_frame, text="Find:", font=ctk.CTkFont(family="Arial", size=12, weight="bold"), text_color="#8a8a9e")
+        find_lbl.grid(row=0, column=0, padx=(12, 5), pady=(10, 5), sticky="w")
+        
+        self.search_entry = ctk.CTkEntry(
+            self.search_frame, placeholder_text="Type text to search...",
+            textvariable=self.search_query_var,
+            font=ctk.CTkFont(family="Arial", size=12),
+            height=28
+        )
+        self.search_entry.grid(row=0, column=1, padx=5, pady=(10, 5), sticky="ew")
+        self.search_entry.bind("<Return>", lambda e: self._find_next())
+        self.search_entry.bind("<Escape>", lambda e: self._toggle_search_panel(show=False))
+        
+        # Triggers perform search on any modification (including paste)
+        self.search_query_var.trace_add("write", lambda *args: self._perform_search())
+        
+        # Controls Frame for Find Row
+        find_ctrl = ctk.CTkFrame(self.search_frame, fg_color="transparent")
+        find_ctrl.grid(row=0, column=2, padx=(5, 12), pady=(10, 5), sticky="e")
+        
+        self.match_lbl = ctk.CTkLabel(find_ctrl, text="0 of 0", font=ctk.CTkFont(family="Arial", size=12), text_color="#8a8a9e", width=55)
+        self.match_lbl.pack(side="left", padx=5)
+        
+        self.btn_prev = ctk.CTkButton(
+            find_ctrl, text="▲", width=24, height=24, fg_color="#34495e", hover_color="#415b76",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._find_prev
+        )
+        self.btn_prev.pack(side="left", padx=2)
+        
+        self.btn_next = ctk.CTkButton(
+            find_ctrl, text="▼", width=24, height=24, fg_color="#34495e", hover_color="#415b76",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._find_next
+        )
+        self.btn_next.pack(side="left", padx=2)
+        
+        self.btn_close_search = ctk.CTkButton(
+            find_ctrl, text="×", width=24, height=24, fg_color="#c0392b", hover_color="#e74c3c",
+            font=ctk.CTkFont(family="Arial", size=14, weight="bold"),
+            command=lambda: self._toggle_search_panel(show=False)
+        )
+        self.btn_close_search.pack(side="left", padx=(8, 0))
+        
+        # Row 1: Replace
+        replace_lbl = ctk.CTkLabel(self.search_frame, text="Replace:", font=ctk.CTkFont(family="Arial", size=12, weight="bold"), text_color="#8a8a9e")
+        replace_lbl.grid(row=1, column=0, padx=(12, 5), pady=(5, 10), sticky="w")
+        
+        self.replace_entry = ctk.CTkEntry(
+            self.search_frame, placeholder_text="Replace with...",
+            font=ctk.CTkFont(family="Arial", size=12),
+            height=28
+        )
+        self.replace_entry.grid(row=1, column=1, padx=5, pady=(5, 10), sticky="ew")
+        self.replace_entry.bind("<Return>", lambda e: self._replace_current())
+        self.replace_entry.bind("<Escape>", lambda e: self._toggle_search_panel(show=False))
+        
+        # Controls Frame for Replace Row
+        replace_ctrl = ctk.CTkFrame(self.search_frame, fg_color="transparent")
+        replace_ctrl.grid(row=1, column=2, padx=(5, 12), pady=(5, 10), sticky="e")
+        
+        self.btn_replace = ctk.CTkButton(
+            replace_ctrl, text="Replace", width=70, height=24, fg_color="#2980b9", hover_color="#3498db",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._replace_current
+        )
+        self.btn_replace.pack(side="left", padx=2)
+        
+        self.btn_replace_all = ctk.CTkButton(
+            replace_ctrl, text="Replace All", width=80, height=24, fg_color="#27ae60", hover_color="#2ecc71",
+            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            command=self._replace_all
+        )
+        self.btn_replace_all.pack(side="left", padx=2)
+
+    def _toggle_search_panel(self, show=None):
+        if show is None:
+            show = not self.search_panel_visible
+            
+        self.search_panel_visible = show
+        
+        if show:
+            # Grid into row 2 of left_pane
+            self.search_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=5)
+            self.search_entry.focus()
+            self.search_entry.select_range(0, "end")
+            self._perform_search()
+        else:
+            self.search_frame.grid_remove()
+            self._clear_search_tags()
+            self.editor.focus()
+
+    def _shortcut_find(self, event=None):
+        self._toggle_search_panel(show=True)
+        self.search_entry.focus()
+        self.search_entry.select_range(0, "end")
+        return "break"
+
+    def _shortcut_replace(self, event=None):
+        self._toggle_search_panel(show=True)
+        self.replace_entry.focus()
+        self.replace_entry.select_range(0, "end")
+        return "break"
+
+    def _clear_search_tags(self):
+        self.editor._textbox.tag_remove("search_highlight", "1.0", "end")
+        self.editor._textbox.tag_remove("active_highlight", "1.0", "end")
+
+    def _perform_search(self, keep_current_index=False):
+        self._clear_search_tags()
+        
+        query = self.search_entry.get()
+        if not query:
+            self.matches = []
+            self.current_match_idx = -1
+            self.match_lbl.configure(text="0 of 0")
+            return
+            
+        import tkinter as tk
+        start_idx = "1.0"
+        count_var = tk.IntVar()
+        
+        old_active_pos = None
+        if keep_current_index and 0 <= self.current_match_idx < len(self.matches):
+            old_active_pos = self.matches[self.current_match_idx][0]
+            
+        self.matches = []
+        
+        while True:
+            pos = self.editor._textbox.search(query, start_idx, stopindex="end", nocase=True, count=count_var)
+            if not pos:
+                break
+            match_len = count_var.get()
+            if match_len == 0:
+                break
+            end_idx = f"{pos} + {match_len}c"
+            self.matches.append((pos, end_idx))
+            start_idx = end_idx
+            
+        if not self.matches:
+            self.current_match_idx = -1
+            self.match_lbl.configure(text="0 of 0")
+            return
+            
+        if keep_current_index and old_active_pos:
+            found = False
+            for idx, (pos, _) in enumerate(self.matches):
+                if pos == old_active_pos:
+                    self.current_match_idx = idx
+                    found = True
+                    break
+            if not found:
+                self.current_match_idx = min(self.current_match_idx, len(self.matches) - 1)
+        else:
+            if self.current_match_idx < 0 or self.current_match_idx >= len(self.matches):
+                self.current_match_idx = 0
+                
+        for pos, end_idx in self.matches:
+            self.editor._textbox.tag_add("search_highlight", pos, end_idx)
+            
+        self._update_active_match()
+
+    def _update_active_match(self):
+        self.editor._textbox.tag_remove("active_highlight", "1.0", "end")
+        
+        if 0 <= self.current_match_idx < len(self.matches):
+            pos, end_idx = self.matches[self.current_match_idx]
+            self.editor._textbox.tag_add("active_highlight", pos, end_idx)
+            self.editor._textbox.see(pos)
+            self.match_lbl.configure(text=f"{self.current_match_idx + 1} of {len(self.matches)}")
+        else:
+            self.match_lbl.configure(text="0 of 0")
+
+    def _find_next(self):
+        if not self.matches:
+            return
+        self.current_match_idx = (self.current_match_idx + 1) % len(self.matches)
+        self._update_active_match()
+        
+    def _find_prev(self):
+        if not self.matches:
+            return
+        self.current_match_idx = (self.current_match_idx - 1) % len(self.matches)
+        self._update_active_match()
+
+    def _replace_current(self):
+        if self.is_processing:
+            return
+        if not self.matches or self.current_match_idx < 0 or self.current_match_idx >= len(self.matches):
+            return
+            
+        pos, end_idx = self.matches[self.current_match_idx]
+        rep_text = self.replace_entry.get()
+        
+        old_state = self.editor._textbox.cget("state")
+        self.editor.configure(state="normal")
+        try:
+            self.editor.delete(pos, end_idx)
+            self.editor.insert(pos, rep_text)
+        finally:
+            self.editor.configure(state=old_state)
+        
+        self.is_dirty = True
+        self._update_counts()
+        
+        self._perform_search(keep_current_index=True)
+
+    def _replace_all(self):
+        if self.is_processing:
+            return
+        if not self.matches:
+            return
+            
+        rep_text = self.replace_entry.get()
+        
+        old_state = self.editor._textbox.cget("state")
+        self.editor.configure(state="normal")
+        try:
+            for pos, end_idx in reversed(self.matches):
+                self.editor.delete(pos, end_idx)
+                self.editor.insert(pos, rep_text)
+        finally:
+            self.editor.configure(state=old_state)
+            
+        self.is_dirty = True
+        self._update_counts()
+        
+        self.current_match_idx = -1
+        self._perform_search()
