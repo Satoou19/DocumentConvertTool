@@ -12,33 +12,9 @@ except ImportError:
     HAS_DND = False
     print("[WARN] tkinterdnd2 not found, drag & drop disabled")
 
-# Safety checks for critical document library dependencies to prevent crashes
-try:
-    import openpyxl
-    HAS_OPENPYXL = True
-except ImportError:
-    HAS_OPENPYXL = False
-
-try:
-    import docx
-    HAS_DOCX = True
-except ImportError:
-    HAS_DOCX = False
-
-try:
-    import pandas
-    HAS_PANDAS = True
-except ImportError:
-    HAS_PANDAS = False
-
-MODE_DEPENDENCIES = {
-    "MD -> Excel":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
-    "MD -> Word":   [("python-docx", HAS_DOCX)],
-    "MD -> CSV":    [("pandas", HAS_PANDAS)],
-    "Excel -> MD":  [("pandas", HAS_PANDAS), ("openpyxl", HAS_OPENPYXL)],
-    "Word -> MD":   [("python-docx", HAS_DOCX)],
-    "CSV -> MD":    [("pandas", HAS_PANDAS)],
-}
+# Force document modules to load and register
+from src.core.registry import ModuleRegistry
+import src.modules  # noqa: F401
 
 from src.services.file_loader import load_document
 from src.services.conversion_service import (
@@ -368,6 +344,16 @@ class App(BaseClass): # type: ignore
     def _cfg(self):
         return MODES[self.mode_var.get()]
 
+    def _get_missing_dependencies(self) -> list[str]:
+        mode = self.mode_var.get()
+        if "->" in mode:
+            src_fmt, dest_fmt = [part.strip() for part in mode.split("->")]
+            target_fmt = dest_fmt if dest_fmt != "MD" else src_fmt
+            module = ModuleRegistry.get_module_by_name(target_fmt)
+            if module:
+                return module.check_dependencies()
+        return []
+
     def _on_mode_change(self, _=None):
         cfg = self._cfg()
         self.lbl_out.configure(text=cfg["out_label"] + ":")
@@ -381,7 +367,7 @@ class App(BaseClass): # type: ignore
             
         # Validate dependencies for the selected mode
         mode = self.mode_var.get()
-        missing = [name for name, available in MODE_DEPENDENCIES[mode] if not available]
+        missing = self._get_missing_dependencies()
         
         if missing:
             self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
@@ -453,8 +439,7 @@ class App(BaseClass): # type: ignore
         state = "normal" if enabled else "disabled"
         
         if enabled:
-            mode = self.mode_var.get()
-            missing = [name for name, available in MODE_DEPENDENCIES[mode] if not available]
+            missing = self._get_missing_dependencies()
             if missing:
                 self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
             else:

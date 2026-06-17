@@ -1,14 +1,9 @@
 import os
 from typing import List
-
-from src.core.converters import (
-    md_to_excel_from_text,
-    md_to_word_from_text,
-    save_markdown_from_text,
-    parse_md_tables,
-    md_to_csv_from_text,
-)
+from src.core.converters import save_markdown_from_text, parse_md_tables
 from src.core.validator import validate_md_tables
+from src.core.registry import ModuleRegistry
+import src.modules  # noqa: F401
 
 
 def has_md_tables(content: str) -> bool:
@@ -32,12 +27,16 @@ def is_output_locked(out_path: str) -> bool:
 
 
 def convert_content(mode: str, content: str, out_path: str) -> str:
-    if mode == "MD -> Excel":
-        return md_to_excel_from_text(content, out_path)
-    if mode == "MD -> Word":
-        return md_to_word_from_text(content, out_path)
-    if mode == "MD -> CSV":
-        return md_to_csv_from_text(content, out_path)
-    if mode in ("Excel -> MD", "Word -> MD", "CSV -> MD"):
+    if "->" not in mode:
+        raise ValueError(f"Invalid mode format: {mode}")
+        
+    src_fmt, dest_fmt = [part.strip() for part in mode.split("->")]
+    
+    if dest_fmt == "MD":
         return save_markdown_from_text(content, out_path)
-    raise ValueError(f"Invalid mode {mode}!")
+        
+    module = ModuleRegistry.get_module_by_name(dest_fmt)
+    if not module:
+        raise ValueError(f"No module found to convert Markdown to {dest_fmt}!")
+        
+    return module.save_from_markdown(content, out_path)
