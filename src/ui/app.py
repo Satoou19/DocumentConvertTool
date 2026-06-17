@@ -742,14 +742,30 @@ class App(BaseClass): # type: ignore
                 self._set_status("Conversion cancelled", "orange")
                 return
 
-                if is_output_locked(out):
-                    self._set_status("Output file locked!", "red")
-                    messagebox.showerror(
-                        parent=self,
-                        title="File Lock Error",
-                        message=f"The destination file '{os.path.basename(out)}' is currently open or locked by another application (e.g., Microsoft Word or Excel).\n\nPlease close the application holding the file and try again."
-                    )
-                    return
+            # Check if the output file is locked
+            try:
+                with open(out, "r+b") as f:
+                    pass
+            except PermissionError:
+                self._set_status("Output file locked!", "red")
+                messagebox.showerror(
+                    parent=self,
+                    title="File Lock Error",
+                    message=f"The destination file '{os.path.basename(out)}' is currently open or locked by another application (e.g., Microsoft Word or Excel).\n\nPlease close the application holding the file and try again."
+                )
+                return
+            except Exception:
+                pass
+
+        self._toggle_ui_state(False)
+        self.btn_convert.configure(text="Converting...")
+        self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
+        self._set_status("Processing conversion and writing file...", "orange")
+
+        # Show and start progress bar
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
+        self.progress_bar.start()
+
         def task():
             try:
                 # Direct dispatcher
