@@ -82,11 +82,16 @@ def validate_file_integrity(path: str) -> tuple[str, str] | None:
     if not os.path.exists(path):
         return ("File does not exist", "The selected file does not exist. Please check the file path.")
 
+    from src.core.registry import ModuleRegistry
+    import src.modules  # noqa: F401
+    
     ext = os.path.splitext(path)[1].lower()
-    if ext not in (".md", ".docx", ".xlsx", ".xls"):
+    if ext != ".md" and not ModuleRegistry.get_module_by_extension(ext):
+        valid_exts = [".md"] + [e for m in ModuleRegistry.get_all_modules() for e in m.file_extensions]
+        valid_str = ", ".join(valid_exts)
         return (
             "Unsupported file extension",
-            f"The file extension '{ext}' is not supported. Please select a valid document file (.md, .docx, .xlsx, .xls)."
+            f"The file extension '{ext}' is not supported. Please select a valid document file ({valid_str})."
         )
 
     # 1. Check if the file is locked / open in another application
