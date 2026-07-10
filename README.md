@@ -63,9 +63,9 @@ The application provides a unified Markdown-centric workflow, allowing users to 
 | Markdown (.md) | Word (.docx)        | ✅ Available |
 | Excel (.xlsx)  | Markdown (.md)      | ✅ Available |
 | Word (.docx)   | Markdown (.md)      | ✅ Available |
-| CSV (.csv)     | Markdown (.md)      | 🔄 Planning |
+| CSV (.csv)     | Markdown (.md)      | ✅ Available |
 | Markdown (.md) | CSV (.csv)          | 🔄 Planning |
-| PDF (.pdf)     | Markdown (.md)      | 🔄 Planning |
+| PDF (.pdf)     | Markdown (.md)      | ✅ Available |
 | Markdown (.md) | HTML (.html)        | 🔄 Planning |
 | Markdown (.md) | PDF (.pdf)          | 🔄 Planning |
 
@@ -160,18 +160,29 @@ dist/
 DocumentConvertTool/
 │
 ├── src/
+│   ├── __version__.py
 │   ├── main.py
 │   │
 │   ├── core/
-│   │   ├── extractors.py
-│   │   └── converters.py
+│   │   ├── base_module.py
+│   │   ├── converters.py
+│   │   ├── registry.py
+│   │   └── validator.py
+│   │
+│   ├── modules/
+│   │   ├── __init__.py
+│   │   ├── csv_module.py
+│   │   ├── excel_module.py
+│   │   ├── pdf_module.py
+│   │   └── word_module.py
 │   │
 │   ├── services/
 │   │   ├── conversion_service.py
 │   │   └── file_loader.py
 │   │
 │   ├── ui/
-│   │   └── app.py
+│   │   ├── app.py
+│   │   └── theme.json
 │   │
 │   └── utils/
 │       └── env.py
@@ -185,12 +196,16 @@ DocumentConvertTool/
 
 | Path                     | Purpose                              |
 | ------------------------ | ------------------------------------ |
+| `src/__version__.py`     | SemVer version config                |
 | `src/main.py`            | Application entry point & initialization |
-| `src/core/extractors.py` | Office → Markdown extraction         |
-| `src/core/converters.py` | Markdown → Office conversion         |
-| `src/services/conversion_service.py` | Conversion and validation service |
-| `src/services/file_loader.py` | File ingestion and extraction service |
-| `src/ui/app.py`          | Main GUI                             |
+| `src/core/base_module.py`| Base abstract document module        |
+| `src/core/registry.py`   | Document module registry             |
+| `src/core/converters.py` | Markdown parsing utilities           |
+| `src/core/validator.py`  | Document structure validation        |
+| `src/modules/`           | Document conversion plugins (Word, Excel, CSV, PDF) |
+| `src/services/`          | Core conversion background services  |
+| `src/ui/app.py`          | Main customtkinter GUI               |
+| `src/ui/theme.json`      | App CustomTkinter theme settings     |
 | `src/utils/env.py`       | UTF-8 encoding & Tcl/Tk path configuration |
 | `run.py`                 | Launcher script                      |
 
@@ -207,6 +222,8 @@ DocumentConvertTool/
 | python-docx   | Word document generation |
 | mammoth       | Word document extraction |
 | markdown2     | Markdown → HTML conversion |
+| pdfplumber    | PDF layout table extraction |
+| markitdown    | Fallback PDF text extraction |
 
 ---
 
@@ -223,20 +240,19 @@ DocumentConvertTool/
 * [x] Unsaved changes warning
 * [x] Word → Markdown: images replaced with [image] placeholder
 
-### Phase 1 — UX Improvements
+### Phase 1 — UX & Format Improvements (Completed)
 
-* [ ] CSV ↔ Markdown support
-* [ ] Smart table validator
-* [ ] Search & replace panel
+* [x] CSV ↔ Markdown support
+* [x] Smart table validator (pipe escaping, table detection)
+* [x] Search & replace panel (integrated into editor)
 * [ ] Markdown syntax highlighting
 * [ ] Autosave draft (restore when reopening app)
 
 ### Phase 2 — Format Expansion
 
-* [ ] CSV → Markdown (extract like Excel)
+* [x] PDF → Markdown (using pdfplumber + markitdown layout extraction)
 * [ ] HTML export (with GitHub Markdown CSS styling)
 * [ ] HTML preview in editor
-* [ ] PDF → Markdown (requires Java 11+)
 * [ ] Markdown → PDF (weasyprint)
 
 ### Phase 3 — Polish & Release
@@ -245,7 +261,7 @@ DocumentConvertTool/
 * [ ] Resizable window
 * [ ] Multi-document tabs
 * [ ] Conversion presets (save frequently-used conversion configs)
-* [ ] v1.0 executable release (PyInstaller)
+* [x] v1.1.0 executable release (PyInstaller)
 
 ---
 
@@ -254,8 +270,8 @@ DocumentConvertTool/
 * **Large files:** File preview is truncated at 500KB to prevent UI lag. Full content will still be converted.
 * **Word documents with images:** Images are replaced with `[image]` placeholder text since inline image handling in Markdown is limited.
 * **Complex Word formatting:** Some advanced Word styles (columns, text boxes, etc.) may not be fully preserved in Markdown conversion.
-* **PDF support:** Coming in Phase 2. PDF import requires Java 11+, PDF export uses weasyprint.
-* **CSV support:** Coming in Phase 1.
+* **PDF support:** PDF import (v1.1.0) supports layout-preserving extraction with page-break table stitching and cell continuation. Exporting Markdown to PDF is not yet supported.
+* **CSV support:** CSV ↔ Markdown conversion is fully supported.
 
 ---
 
