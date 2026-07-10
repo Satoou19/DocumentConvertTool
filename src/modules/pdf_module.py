@@ -1,0 +1,273 @@
+import os
+import sys
+from src.core.base_module import BaseDocumentModule
+from src.core.registry import ModuleRegistry
+
+class PDFModule(BaseDocumentModule):
+    @property
+    def name(self) -> str:
+        return "PDF"
+
+    @property
+    def file_extensions(self) -> list[str]:
+        return [".pdf"]
+
+    @property
+    def required_dependencies(self) -> list[str]:
+        return ["markitdown", "pdfplumber"]
+
+    def load_to_markdown(self, file_path: str) -> str:
+        """
+        Extracts PDF content to clean Markdown text with table structure recognition using pdfplumber.
+        
+        Supports table stitching across page breaks when tables are contiguous 
+        (separated only by page breaks or empty space/headers) and merges continuation cells.
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        try:
+            # pyrefly: ignore [missing-import]
+            import pdfplumber
+            
+            def merge_non_overlapping_columns(rows):
+                if not rows or len(rows) < 2:
+                    return rows
+                num_cols = len(rows[0])
+                cols = list(range(num_cols))
+                changed = True
+                while changed:
+                    changed = False
+                    for i in range(len(cols) - 1):
+                        c1 = cols[i]
+                        c2 = cols[i+1]
+                        overlap = False
+                        for row in rows:
+                            if row[c1] and row[c2]:
+                                overlap = True
+                                break
+                        if not overlap:
+                            for row in rows:
+                                if row[c2]:
+                                    row[c1] = row[c2]
+                            cols.pop(i+1)
+                            changed = True
+                            break
+                rebuilt = []
+                for row in rows:
+                    rebuilt.append([row[c] for c in cols])
+                return rebuilt
+
+            def clean_table(table_data):
+                if not table_data:
+                    return []
+                valid_rows = [r for r in table_data if r is not None]
+                if not valid_rows:
+                    return []
+                max_cols = max(len(r) for r in valid_rows)
+                cleaned = []
+                for row in valid_rows:
+                    cleaned_row = []
+                    for cell in row:
+                        val = str(cell).strip() if cell is not None else ""
+                        cleaned_row.append(val)
+                    if len(cleaned_row) < max_cols:
+                        cleaned_row.extend([""] * (max_cols - len(cleaned_row)))
+                    cleaned.append(cleaned_row[:max_cols])
+                merged = merge_non_overlapping_columns(cleaned)
+                if not merged:
+                    return []
+                num_cols = len(merged[0])
+                active_cols = []
+                for col_idx in range(num_cols):
+                    has_val = False
+                    for row in merged:
+                        if row[col_idx]:
+                            has_val = True
+                            break
+                    if has_val:
+                        active_cols.append(col_idx)
+                if not active_cols:
+                    return []
+                rebuilt = []
+                for row in merged:
+                    rebuilt.append([row[idx] for idx in active_cols])
+                return rebuilt
+
+            def map_row_to_parent_columns(t2_row, t2_cols, t1_cols):
+                parent_row = [""] * len(t1_cols)
+                for j, cell in enumerate(t2_row):
+                    val = str(cell).strip() if cell is not None else ""
+                    tx0 = t2_cols[j].bbox[0]
+                    tx1 = t2_cols[j].bbox[2]
+                    
+                    best_idx = -1
+                    max_overlap = -1
+                    for idx, col in enumerate(t1_cols):
+                        cx0 = col.bbox[0]
+                        cx1 = col.bbox[2]
+                        overlap = min(tx1, cx1) - max(tx0, cx0)
+                        if overlap > max_overlap:
+                            max_overlap = overlap
+                            best_idx = idx
+                    if best_idx != -1 and max_overlap > 0:
+                        parent_row[best_idx] = val
+                return parent_row
+
+            def should_merge_first_row(last_row, first_row):
+                if len(last_row) == len(first_row) and len(first_row) > 1:
+                    if not first_row[0]:
+                        # Case A: Last row of parent has empty cell where first row of child has content
+                        for c in range(1, len(first_row)):
+                            if not last_row[c] and first_row[c]:
+                                return True
+                        # Case B: Both have content in the last column but parent cell does not end with sentence punctuation
+                        if last_row[-1] and first_row[-1]:
+                            last_char = last_row[-1].strip()[-1] if last_row[-1].strip() else ""
+                            if last_char not in (".", "!", "?", ":"):
+                                return True
+                return False
+
+            def format_markdown_table(table_data):
+                cleaned = clean_table(table_data)
+                if not cleaned:
+                    return ""
+                headers = cleaned[0]
+                rows = cleaned[1:]
+                parts = []
+                parts.append("| " + " | ".join(h.replace("\n", "<br>").replace("|", "\\|") for h in headers) + " |")
+                parts.append("| " + " | ".join("---" for _ in headers) + " |")
+                for r in rows:
+                    parts.append("| " + " | ".join(cell.replace("\n", "<br>").replace("|", "\\|") for cell in r) + " |")
+                return "\n".join(parts)
+
+            doc_elements = []
+            settings = {"snap_tolerance": 10, "join_tolerance": 10}
+            
+            with pdfplumber.open(file_path) as pdf:
+                for page_idx, page in enumerate(pdf.pages):
+                    tables = sorted(page.find_tables(table_settings=settings), key=lambda t: t.bbox[1])
+                    current_y = 0
+                    
+                    for t in tables:
+                        bx0, btop, bx1, bbottom = t.bbox
+                        if btop > current_y + 2:
+                            cropped = page.crop((0, current_y, page.width, btop))
+                            text_slice = cropped.extract_text()
+                            if text_slice:
+                                doc_elements.append({"type": "text", "content": text_slice})
+                        
+                        doc_elements.append({
+                            "type": "table",
+                            "content": t.extract(),
+                            "bbox": t.bbox,
+                            "columns": t.columns
+                        })
+                        current_y = bbottom
+                        
+                    if current_y < page.height:
+                        cropped = page.crop((0, current_y, page.width, page.height))
+                        text_slice = cropped.extract_text()
+                        if text_slice:
+                            doc_elements.append({"type": "text", "content": text_slice})
+                            
+                    # Add page break marker (except for the last page)
+                    if page_idx < len(pdf.pages) - 1:
+                        doc_elements.append({"type": "page_break", "content": "\n\n---\n\n"})
+
+            # STITCHING PROCESS
+            changed = True
+            while changed:
+                changed = False
+                for idx in range(len(doc_elements) - 1):
+                    el1 = doc_elements[idx]
+                    if el1["type"] != "table":
+                        continue
+                        
+                    next_table_idx = -1
+                    has_page_break = False
+                    accumulated_gap_text_len = 0
+                    for j in range(idx + 1, len(doc_elements)):
+                        el_next = doc_elements[j]
+                        if el_next["type"] == "table":
+                            next_table_idx = j
+                            break
+                        elif el_next["type"] == "page_break":
+                            has_page_break = True
+                            continue
+                        elif el_next["type"] == "text":
+                            text_content = el_next["content"].strip()
+                            if text_content:
+                                accumulated_gap_text_len += len(text_content)
+                        else:
+                            # Set an arbitrary high value to deliberately block stitching 
+                            # if an unexpected or non-text element is found in the gap.
+                            accumulated_gap_text_len += 9999
+                            
+                    if next_table_idx != -1 and has_page_break and accumulated_gap_text_len < 150:
+                        el3 = doc_elements[next_table_idx]
+                        t1_cols = el1["columns"]
+                        t2_cols = el3["columns"]
+                        t2_rows = el3["content"]
+                        
+                        mapped_rows = []
+                        for row in t2_rows:
+                            mapped = map_row_to_parent_columns(row, t2_cols, t1_cols)
+                            mapped_rows.append(mapped)
+                            
+                        # Perform cell-continuation merge if needed
+                        if el1["content"] and mapped_rows:
+                            parent_last_row = el1["content"][-1]
+                            child_first_row = mapped_rows[0]
+                            if should_merge_first_row(parent_last_row, child_first_row):
+                                for col_idx in range(len(parent_last_row)):
+                                    val_T2 = child_first_row[col_idx]
+                                    if val_T2:
+                                        if parent_last_row[col_idx]:
+                                            parent_last_row[col_idx] = parent_last_row[col_idx] + " " + val_T2
+                                        else:
+                                            parent_last_row[col_idx] = val_T2
+                                mapped_rows.pop(0)
+                        
+                        el1["content"].extend(mapped_rows)
+                        
+                        # Remove elements between idx and next_table_idx
+                        del doc_elements[idx + 1 : next_table_idx + 1]
+                        changed = True
+                        break
+
+            # BUILD RENDERED OUTPUT
+            output_parts = []
+            for el in doc_elements:
+                if el["type"] == "text":
+                    output_parts.append(el["content"].strip())
+                elif el["type"] == "table":
+                    md_table = format_markdown_table(el["content"])
+                    if md_table:
+                        output_parts.append(md_table)
+                elif el["type"] == "page_break":
+                    output_parts.append(el["content"])
+                    
+            if not output_parts:
+                return "*(Empty PDF)*"
+            return "\n\n".join(output_parts)
+            
+        except Exception as e:
+            # Print debug log before falling back
+            print(f"[DEBUG] pdfplumber table extraction failed: {e}. Falling back to markitdown.", file=sys.stderr)
+            try:
+                # pyrefly: ignore [missing-import]
+                from markitdown import MarkItDown
+                md = MarkItDown()
+                result = md.convert(file_path)
+                if not result or not result.text_content:
+                    return "*(Empty PDF)*"
+                return result.text_content
+            except Exception as inner_e:
+                raise RuntimeError(f"PDF Ingestion Error: Failed to extract text layer from PDF file. Detail: {str(inner_e)}")
+
+    def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
+        """MD -> PDF conversion is not supported at this stage."""
+        raise NotImplementedError("MD → PDF requires html_module first (MD → HTML → PDF via WeasyPrint), coming in a follow-up task.")
+
+ModuleRegistry.register(PDFModule())

@@ -11,3 +11,6 @@ venv/
 agent_instructions.md
 .gitnexus
 PROJECT_SUMMARY.md
+.gitnexusignore
+/.agents/*
+scratch/

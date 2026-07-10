@@ -30,7 +30,8 @@ class ExcelModule(BaseDocumentModule):
                 parts.append(header)
                 parts.append(sep)
                 for _, row in df.iterrows():
-                    parts.append("| " + " | ".join(str(v) for v in row) + " |")
+                    cells = [str(v).replace("\n", " ").replace("|", "\\|") for v in row]
+                    parts.append("| " + " | ".join(cells) + " |")
             else:
                 parts.append("*(Empty Table)*")
             parts.append("")

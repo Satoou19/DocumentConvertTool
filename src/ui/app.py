@@ -23,6 +23,103 @@ from src.services.conversion_service import (
     has_md_tables,
     is_output_locked,
 )
+from src.__version__ import __version__
+
+# Load custom theme before any window is constructed
+_theme_path = os.path.join(os.path.dirname(__file__), "theme.json")
+if os.path.exists(_theme_path):
+    try:
+        ctk.set_default_color_theme(_theme_path)
+    except Exception as e:
+        print(f"[WARN] Failed to load custom theme: {e}")
+
+# Premium Accent Palettes configuration. Format: (light_mode_color, dark_mode_color)
+PALETTES = {
+    "Violet Cyberpunk": {
+        "text_accent_primary": ("#5d3fd3", "#725ac1"),
+        "text_accent_secondary": ("#0096b4", "#00b4d8"),
+        "btn_convert_fg": ("#5d3fd3", "#725ac1"),
+        "btn_convert_hover": ("#4c329a", "#5d3fd3"),
+        "btn_open_fg": ("#0096b4", "#00b4d8"),
+        "btn_open_hover": ("#007a93", "#0096b4"),
+        "bg_header": ("#eaeaea", "#13141a"),
+        "bg_pane": ("#eaeaea", "#111216"),
+        "bg_component": ("#ffffff", "#181a22"),
+        "bg_pure_dark": ("#ffffff", "#07080a"),
+        "border_color": ("#dcdcdc", "#222530")
+    },
+    "Emerald Obsidian": {
+        "text_accent_primary": ("#059669", "#10b981"),
+        "text_accent_secondary": ("#4b5563", "#64748b"),
+        "btn_convert_fg": ("#059669", "#10b981"),
+        "btn_convert_hover": ("#047857", "#059669"),
+        "btn_open_fg": ("#4b5563", "#64748b"),
+        "btn_open_hover": ("#374151", "#4b5563"),
+        "bg_header": ("#e6f4ea", "#121815"),
+        "bg_pane": ("#eaeaea", "#111216"),
+        "bg_component": ("#ffffff", "#161c19"),
+        "bg_pure_dark": ("#ffffff", "#080c0a"),
+        "border_color": ("#dcdcdc", "#202a25")
+    },
+    "Deep Ocean": {
+        "text_accent_primary": ("#2563eb", "#3b82f6"),
+        "text_accent_secondary": ("#0891b2", "#06b6d4"),
+        "btn_convert_fg": ("#2563eb", "#3b82f6"),
+        "btn_convert_hover": ("#1d4ed8", "#2563eb"),
+        "btn_open_fg": ("#0891b2", "#06b6d4"),
+        "btn_open_hover": ("#0e7490", "#0891b2"),
+        "bg_header": ("#e8f0fe", "#0d131f"),
+        "bg_pane": ("#eaeaea", "#111216"),
+        "bg_component": ("#ffffff", "#121926"),
+        "bg_pure_dark": ("#ffffff", "#070b12"),
+        "border_color": ("#dcdcdc", "#1a2436")
+    },
+    "Sunset Gold": {
+        "text_accent_primary": ("#d97706", "#f59e0b"),
+        "text_accent_secondary": ("#ea580c", "#f97316"),
+        "btn_convert_fg": ("#d97706", "#f59e0b"),
+        "btn_convert_hover": ("#b45309", "#d97706"),
+        "btn_open_fg": ("#ea580c", "#f97316"),
+        "btn_open_hover": ("#c2410c", "#ea580c"),
+        "bg_header": ("#fef3c7", "#171410"),
+        "bg_pane": ("#eaeaea", "#111216"),
+        "bg_component": ("#ffffff", "#1a1612"),
+        "bg_pure_dark": ("#ffffff", "#0a0b0d"),
+        "border_color": ("#dcdcdc", "#26201a")
+    }
+}
+
+# UI Style configurations and color variables (Adapts to Light/Dark Mode)
+STYLE = {
+    # Typography
+    "font_family_title": "Segoe UI",
+    "font_family_body": "Segoe UI",
+    "font_family_mono": "Consolas",
+    
+    # Text colors
+    "text_primary": ("#1d1d1f", "#ffffff"),
+    "text_muted": ("#555555", "#8f93a7"),
+    
+    # Status colors (light_mode_color, dark_mode_color)
+    "status_green": ("#0d9488", "#2ec4b6"),
+    "status_red": ("#dc2626", "#e71d36"),
+    "status_orange": ("#ea580c", "#ff9f1c"),
+    "status_gray": ("#6b7280", "#6f738a"),
+    
+    # Button override colors
+    "btn_clear_fg": ("#dc2626", "#c0392b"),
+    "btn_clear_hover": ("#b91c1c", "#e74c3c"),
+    
+    "btn_utility_fg": ("#f3f4f6", "#1d202b"),
+    "btn_utility_hover": ("#e5e7eb", "#2b2f42"),
+    "btn_utility_border": ("#d1d5db", "#343952"),
+    
+    # Text search highlight tags (manually resolved in code)
+    "tag_search_bg": ("#d8b4fe", "#3d2e6b"),
+    "tag_search_fg": ("#000000", "#ffffff"),
+    "tag_active_bg": ("#fef08a", "#b58400"),
+    "tag_active_fg": ("#000000", "#ffffff")
+}
 
 # ── Configuration constants ───────────────────────────────────────────────────
 
@@ -38,6 +135,7 @@ MODES = {
     "Excel -> MD":  {"in_ext": ".xlsx", "out_ext": ".md",   "in_label": "File .xlsx", "out_label": "Save .md"},
     "Word -> MD":   {"in_ext": ".docx", "out_ext": ".md",   "in_label": "File .docx", "out_label": "Save .md"},
     "CSV -> MD":    {"in_ext": ".csv",  "out_ext": ".md",   "in_label": "File .csv",  "out_label": "Save .md"},
+    "PDF -> MD":    {"in_ext": ".pdf",  "out_ext": ".md",   "in_label": "File .pdf",  "out_label": "Save .md"},
 }
 
 IN_FILETYPES = {
@@ -45,6 +143,7 @@ IN_FILETYPES = {
     ".xlsx": [("Excel", "*.xlsx *.xls"), ("All Files", "*.*")],
     ".docx": [("Word", "*.docx"), ("All Files", "*.*")],
     ".csv":  [("CSV", "*.csv"), ("All Files", "*.*")],
+    ".pdf":  [("PDF", "*.pdf"), ("All Files", "*.*")],
 }
 
 OUT_FILETYPES = {
@@ -56,10 +155,11 @@ OUT_FILETYPES = {
 
 BaseClass = TkinterDnD.Tk if HAS_DND else ctk.CTk
 
+
 class App(BaseClass): # type: ignore
     def __init__(self):
         super().__init__()
-        self.title("Document Converter Workspace")
+        self.title(f"Document Converter Workspace v{__version__}")
         
         # Thiết lập kích thước cửa sổ phù hợp với nhiều loại màn hình (đặc biệt là laptop)
         window_width = 1150
@@ -87,6 +187,10 @@ class App(BaseClass): # type: ignore
         self.is_dirty = False
         self.is_processing = False
         
+        # Theme variables
+        self.appearance_mode_var = ctk.StringVar(value="Dark")
+        self.current_palette_var = ctk.StringVar(value="Violet Cyberpunk")
+        
         # Search & Replace panel variables
         self.matches = []
         self.current_match_idx = -1
@@ -100,63 +204,136 @@ class App(BaseClass): # type: ignore
     def _build_ui(self):
         # Grid Configuration for main workspace
         self.rowconfigure(0, weight=0) # Header
-        self.rowconfigure(1, weight=1) # Main workspace split
+        self.rowconfigure(1, weight=0) # Separator Line
+        self.rowconfigure(2, weight=1) # Main workspace split
         self.columnconfigure(0, weight=1)
 
         # 1. Sleek Header Panel
-        header_frame = ctk.CTkFrame(self, fg_color="#1e1e24", height=70, corner_radius=0)
-        header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
-        header_frame.grid_propagate(False)
+        self.header_frame = ctk.CTkFrame(self, fg_color=STYLE["text_primary"], height=70, corner_radius=0, border_width=0) # Will be configured on palette change
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        self.header_frame.grid_propagate(False)
         
         title_lbl = ctk.CTkLabel(
-            header_frame, text="Document Converter Workspace",
-            font=ctk.CTkFont(family="Arial", size=20, weight="bold"), text_color="#ffffff"
+            self.header_frame, text=f"Document Converter Workspace v{__version__}",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=20, weight="bold"), text_color=STYLE["text_primary"]
         )
         title_lbl.pack(side="left", padx=25, pady=10)
         
         subtitle_lbl = ctk.CTkLabel(
-            header_frame, text="Multipurpose document editing and conversion workspace",
-            font=ctk.CTkFont(family="Arial", size=13, slant="italic"), text_color="#8a8a9e"
+            self.header_frame, text="Multipurpose document editing and conversion workspace",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=13, slant="italic"), text_color=STYLE["text_muted"]
         )
         subtitle_lbl.pack(side="left", padx=10, pady=16)
 
+        # Theme controls frame on the right side of the header
+        theme_ctrl_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        theme_ctrl_frame.pack(side="right", padx=25, pady=10)
+        
+        # Color Palette Dropdown
+        palette_lbl = ctk.CTkLabel(
+            theme_ctrl_frame, text="Theme:", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            text_color=STYLE["text_muted"]
+        )
+        palette_lbl.pack(side="left", padx=(0, 5))
+        
+        self.palette_menu = ctk.CTkOptionMenu(
+            theme_ctrl_frame, 
+            values=list(PALETTES.keys()), 
+            variable=self.current_palette_var,
+            width=140, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            fg_color=STYLE["btn_utility_fg"],
+            button_color=STYLE["btn_utility_fg"],
+            button_hover_color=STYLE["btn_utility_hover"],
+            text_color=STYLE["text_primary"],
+            command=self._change_palette
+        )
+        self.palette_menu.pack(side="left", padx=(0, 15))
+        
+        # Appearance Mode Dropdown
+        mode_lbl = ctk.CTkLabel(
+            theme_ctrl_frame, text="Mode:", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            text_color=STYLE["text_muted"]
+        )
+        mode_lbl.pack(side="left", padx=(0, 5))
+        
+        self.appearance_menu = ctk.CTkOptionMenu(
+            theme_ctrl_frame, 
+            values=["Dark", "Light", "System"], 
+            variable=self.appearance_mode_var,
+            width=90, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            fg_color=STYLE["btn_utility_fg"],
+            button_color=STYLE["btn_utility_fg"],
+            button_hover_color=STYLE["btn_utility_hover"],
+            text_color=STYLE["text_primary"],
+            command=self._change_appearance_mode
+        )
+        self.appearance_menu.pack(side="left")
+
+        # Thin border separator line below the header
+        self.separator = ctk.CTkFrame(self, fg_color=STYLE["btn_utility_border"], height=1, corner_radius=0, border_width=0)
+        self.separator.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
+
         # 2. Main Workspace Split (Left Pane & Right Pane)
         workspace = ctk.CTkFrame(self, fg_color="transparent")
-        workspace.grid(row=1, column=0, sticky="nsew", padx=15, pady=15)
+        workspace.grid(row=2, column=0, sticky="nsew", padx=15, pady=15)
         workspace.columnconfigure(0, weight=6, uniform="workspace_split") # Left Pane gets more weight
         workspace.columnconfigure(1, weight=5, uniform="workspace_split") # Right Pane
         workspace.rowconfigure(0, weight=1)
 
         # ── LEFT PANE: Input Editor & Overview ────────────────────────────────
-        left_pane = ctk.CTkFrame(workspace, fg_color="#18181c", corner_radius=12, border_width=1, border_color="#2c2c35")
-        left_pane.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=0)
-        left_pane.rowconfigure(0, weight=0) # Label
-        left_pane.rowconfigure(1, weight=0) # Drag Drop Info
-        left_pane.rowconfigure(2, weight=0) # Search & Replace Panel (collapsible)
-        left_pane.rowconfigure(3, weight=1) # Textbox Editor
-        left_pane.rowconfigure(4, weight=0) # Footer stats
-        left_pane.columnconfigure(0, weight=1)
-
-        editor_title = ctk.CTkLabel(
-            left_pane, text="INPUT EDITOR & OVERVIEW (MARKDOWN / TEXT)",
-            font=ctk.CTkFont(family="Arial", size=13, weight="bold"), text_color="#3a86ff"
+        self.left_pane = ctk.CTkFrame(
+            workspace, 
+            fg_color=STYLE["text_primary"], 
+            corner_radius=12, 
+            border_width=1, 
+            border_color=STYLE["btn_utility_border"]
         )
-        editor_title.grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
+        self.left_pane.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=0)
+        self.left_pane.rowconfigure(0, weight=0) # Label
+        self.left_pane.rowconfigure(1, weight=0) # Drag Drop Info
+        self.left_pane.rowconfigure(2, weight=0) # Search & Replace Panel (collapsible)
+        self.left_pane.rowconfigure(3, weight=1) # Textbox Editor
+        self.left_pane.rowconfigure(4, weight=0) # Footer stats
+        self.left_pane.columnconfigure(0, weight=1)
+
+        self.editor_title = ctk.CTkLabel(
+            self.left_pane, text="INPUT EDITOR & OVERVIEW (MARKDOWN / TEXT)",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=12, weight="bold"), 
+            text_color=STYLE["text_primary"]
+        )
+        self.editor_title.grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
 
         # File Load Area / Drag Zone (with subtle border for drag enter/leave highlights)
-        self.load_bar = ctk.CTkFrame(left_pane, fg_color="#1c1c24", corner_radius=8, height=45, border_width=1, border_color="#2c2c35")
+        self.load_bar = ctk.CTkFrame(
+            self.left_pane, 
+            fg_color=STYLE["btn_utility_fg"], 
+            corner_radius=8, 
+            height=45, 
+            border_width=1, 
+            border_color=STYLE["btn_utility_border"]
+        )
         self.load_bar.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
         self.load_bar.pack_propagate(False)
         
         self.drop_lbl = ctk.CTkLabel(
             self.load_bar, text="Drag & drop file here or click 'Browse' to load content...",
-            font=ctk.CTkFont(family="Arial", size=12), text_color="#7eb8f5"
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12), 
+            text_color=STYLE["text_muted"]
         )
         self.drop_lbl.pack(side="left", padx=15, fill="both", expand=True)
 
         self.btn_browse_in = ctk.CTkButton(
             self.load_bar, text="Browse", width=75, height=28,
-            font=ctk.CTkFont(family="Arial", size=12, weight="bold"), fg_color="#2980b9", hover_color="#3498db",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
             command=self._browse_input
         )
         self.btn_browse_in.pack(side="right", padx=8, pady=8)
@@ -171,17 +348,20 @@ class App(BaseClass): # type: ignore
 
         # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
-            left_pane, fg_color="#111115", text_color="#f8f8f2",
-            font=ctk.CTkFont(family="Consolas", size=13),
-            border_width=1, border_color="#2c2c35", corner_radius=8,
+            self.left_pane, 
+            fg_color=STYLE["btn_utility_fg"], 
+            text_color="#f8f8f2",
+            font=ctk.CTkFont(family=STYLE["font_family_mono"], size=13),
+            border_width=1, 
+            border_color=STYLE["btn_utility_border"], 
+            corner_radius=8,
             undo=True
         )
         self.editor.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
         self.editor.bind("<KeyRelease>", self._update_counts)
 
         # Register highlight tags for search
-        self.editor._textbox.tag_config("search_highlight", background="#415b76", foreground="#ffffff")
-        self.editor._textbox.tag_config("active_highlight", background="#f39c12", foreground="#ffffff")
+        self._update_highlight_colors()
 
         # Bind custom Undo/Redo events to catch exceptions and prevent duplicate actions
         self.editor.bind("<Control-z>", self._undo)
@@ -192,140 +372,205 @@ class App(BaseClass): # type: ignore
         self.editor.bind("<Control-Shift-Z>", self._redo)
 
         # Editor Footer (Stats & Actions)
-        editor_footer = ctk.CTkFrame(left_pane, fg_color="transparent")
+        editor_footer = ctk.CTkFrame(self.left_pane, fg_color="transparent")
         editor_footer.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
         
         self.char_lbl = ctk.CTkLabel(
-            editor_footer, text="Characters: 0", font=ctk.CTkFont(family="Arial", size=12), text_color="#8a8a9e"
+            editor_footer, text="Characters: 0", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12), 
+            text_color=STYLE["text_muted"]
         )
         self.char_lbl.pack(side="left", padx=5)
 
         self.word_lbl = ctk.CTkLabel(
-            editor_footer, text=" |  Words: 0", font=ctk.CTkFont(family="Arial", size=12), text_color="#8a8a9e"
+            editor_footer, text=" |  Words: 0", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12), 
+            text_color=STYLE["text_muted"]
         )
         self.word_lbl.pack(side="left", padx=5)
 
         self.btn_clear = ctk.CTkButton(
-            editor_footer, text="Clear All", width=70, height=24, fg_color="#c0392b", hover_color="#e74c3c",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            editor_footer, text="Clear All", width=70, height=24, 
+            fg_color=STYLE["btn_clear_fg"], 
+            hover_color=STYLE["btn_clear_hover"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._clear_editor
         )
         self.btn_clear.pack(side="right", padx=5)
 
         self.btn_find_replace = ctk.CTkButton(
-            editor_footer, text="Find & Replace", width=95, height=24, fg_color="#34495e", hover_color="#415b76",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            editor_footer, text="Find & Replace", width=95, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._toggle_search_panel
         )
         self.btn_find_replace.pack(side="right", padx=5)
 
         self.btn_redo = ctk.CTkButton(
-            editor_footer, text="Redo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            editor_footer, text="Redo", width=55, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._redo
         )
         self.btn_redo.pack(side="right", padx=5)
 
         self.btn_undo = ctk.CTkButton(
-            editor_footer, text="Undo", width=55, height=24, fg_color="#34495e", hover_color="#415b76",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            editor_footer, text="Undo", width=55, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._undo
         )
         self.btn_undo.pack(side="right", padx=5)
 
 
         # ── RIGHT PANE: Output Configuration, Preview & Actions ───────────────
-        right_pane = ctk.CTkFrame(workspace, fg_color="#18181c", corner_radius=12, border_width=1, border_color="#2c2c35")
-        right_pane.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=0)
-        right_pane.rowconfigure(0, weight=0) # Title
-        right_pane.rowconfigure(1, weight=0) # Config panel
-        right_pane.rowconfigure(2, weight=1) # Output preview / Logs textbox
-        right_pane.rowconfigure(3, weight=0) # Convert Button & Status
-        right_pane.columnconfigure(0, weight=1)
-
-        output_title = ctk.CTkLabel(
-            right_pane, text="OUTPUT CONFIGURATION & EXPORT",
-            font=ctk.CTkFont(family="Arial", size=13, weight="bold"), text_color="#2ecc71"
+        self.right_pane = ctk.CTkFrame(
+            workspace, 
+            fg_color=STYLE["text_primary"], 
+            corner_radius=12, 
+            border_width=1, 
+            border_color=STYLE["btn_utility_border"]
         )
-        output_title.grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
+        self.right_pane.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=0)
+        self.right_pane.rowconfigure(0, weight=0) # Title
+        self.right_pane.rowconfigure(1, weight=0) # Config panel
+        self.right_pane.rowconfigure(2, weight=1) # Output preview / Logs textbox
+        self.right_pane.rowconfigure(3, weight=0) # Convert Button & Status
+        self.right_pane.columnconfigure(0, weight=1)
+
+        self.output_title = ctk.CTkLabel(
+            self.right_pane, text="OUTPUT CONFIGURATION & EXPORT",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=12, weight="bold"), 
+            text_color=STYLE["text_primary"]
+        )
+        self.output_title.grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
 
         # Config Panel
-        config_frame = ctk.CTkFrame(right_pane, fg_color="#1c1c24", corner_radius=8)
-        config_frame.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
-        config_frame.columnconfigure(0, weight=1)
+        self.config_frame = ctk.CTkFrame(
+            self.right_pane, 
+            fg_color=STYLE["btn_utility_fg"], 
+            corner_radius=8,
+            border_width=1,
+            border_color=STYLE["btn_utility_border"]
+        )
+        self.config_frame.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
+        self.config_frame.columnconfigure(0, weight=1)
 
         # Mode row
-        row_mode = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_mode = ctk.CTkFrame(self.config_frame, fg_color="transparent")
         row_mode.pack(fill="x", padx=12, pady=(10, 5))
-        ctk.CTkLabel(row_mode, text="Mode:", width=70, anchor="w", font=ctk.CTkFont(family="Arial", size=12, weight="bold")).pack(side="left")
+        ctk.CTkLabel(
+            row_mode, text="Mode:", width=70, anchor="w", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            text_color=STYLE["text_muted"]
+        ).pack(side="left")
+        
         self.mode_menu = ctk.CTkOptionMenu(
             row_mode, values=list(MODES.keys()), variable=self.mode_var,
-            width=200, font=ctk.CTkFont(family="Arial", size=12),
+            width=200, font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            fg_color=STYLE["text_primary"],
+            button_color=STYLE["text_primary"],
+            button_hover_color=STYLE["text_primary"],
             command=self._on_mode_change
         )
         self.mode_menu.pack(side="left", padx=5)
 
         # Path row
-        row_out = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_out = ctk.CTkFrame(self.config_frame, fg_color="transparent")
         row_out.pack(fill="x", padx=12, pady=(5, 10))
-        self.lbl_out = ctk.CTkLabel(row_out, text="Output:", width=70, anchor="w", font=ctk.CTkFont(family="Arial", size=12, weight="bold"))
+        self.lbl_out = ctk.CTkLabel(
+            row_out, text="Output:", width=70, anchor="w", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            text_color=STYLE["text_muted"]
+        )
         self.lbl_out.pack(side="left")
         
         self.entry_out = ctk.CTkEntry(
             row_out, textvariable=self.out_path, placeholder_text="Select save location...",
-            font=ctk.CTkFont(family="Arial", size=12)
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12)
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
         
         self.btn_browse_out = ctk.CTkButton(
             row_out, text="Browse", width=65, height=28,
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"), fg_color="#2980b9", hover_color="#3498db",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
             command=self._browse_output
         )
         self.btn_browse_out.pack(side="right", padx=2)
 
         # Output Preview & Logs Workspace
         self.preview_box = ctk.CTkTextbox(
-            right_pane, fg_color="#111115", text_color="#a0a0b2",
-            font=ctk.CTkFont(family="Consolas", size=12),
-            border_width=1, border_color="#2c2c35", corner_radius=8
+            self.right_pane, 
+            fg_color=STYLE["btn_utility_fg"], 
+            text_color=STYLE["text_muted"],
+            font=ctk.CTkFont(family=STYLE["font_family_mono"], size=12),
+            border_width=1, 
+            border_color=STYLE["btn_utility_border"], 
+            corner_radius=8
         )
         self.preview_box.grid(row=2, column=0, sticky="nsew", padx=15, pady=8)
         self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
 
         # Large Action Button & Status Info
-        action_frame = ctk.CTkFrame(right_pane, fg_color="transparent")
+        action_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent")
         action_frame.grid(row=3, column=0, sticky="ew", padx=15, pady=(5, 12))
         action_frame.columnconfigure(0, weight=3)
         action_frame.columnconfigure(1, weight=2)
 
         self.btn_convert = ctk.CTkButton(
             action_frame, text="CONVERT & SAVE", height=48,
-            font=ctk.CTkFont(family="Arial", size=13, weight="bold"),
-            fg_color="#2ecc71", hover_color="#27ae60", text_color="#ffffff",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=13, weight="bold"),
+            fg_color=STYLE["text_primary"], 
+            hover_color=STYLE["text_primary"], 
+            text_color=STYLE["text_primary"],
             command=self._run_conversion
         )
         self.btn_convert.grid(row=0, column=0, sticky="ew", padx=(0, 5), pady=(0, 5))
 
         self.btn_open_file = ctk.CTkButton(
             action_frame, text="OPEN CREATED FILE", height=48,
-            font=ctk.CTkFont(family="Arial", size=13, weight="bold"),
-            fg_color="#1c1c24", hover_color="#2c2c35", text_color="#8a8a9e",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=13, weight="bold"),
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"], 
+            text_color=STYLE["status_gray"],
             state="disabled",
             command=self._open_generated_file
         )
         self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(5, 0), pady=(0, 5))
 
-        self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", width=10, height=8, progress_color="#2ecc71")
+        self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", width=10, height=8, progress_color=STYLE["status_green"])
         # Kept hidden initially until conversion begins
 
         self.status_lbl = ctk.CTkLabel(
-            action_frame, text="Ready to process", font=ctk.CTkFont(family="Arial", size=12, slant="italic"), text_color="gray"
+            action_frame, text="Ready to process", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, slant="italic"), 
+            text_color=STYLE["status_gray"]
         )
         self.status_lbl.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0))
 
         # Build search and replace panel
-        self._build_search_panel(left_pane)
+        self._build_search_panel(self.left_pane)
+
+        # Apply the default theme colors
+        ctk.set_appearance_mode(self.appearance_mode_var.get())
+        self._change_palette("Violet Cyberpunk")
         
         # Bind keyboard shortcuts on the editor widget
         self.editor.bind("<Control-f>", self._shortcut_find)
@@ -370,7 +615,7 @@ class App(BaseClass): # type: ignore
         missing = self._get_missing_dependencies()
         
         if missing:
-            self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
+            self.btn_convert.configure(state="disabled", fg_color=STYLE["status_red"], text="UNAVAILABLE")
             missing_str = ", ".join(missing)
             self._set_status(f"Missing dependency: {missing_str}", "red")
             
@@ -383,7 +628,8 @@ class App(BaseClass): # type: ignore
                           f"Then restart this application to apply."
             self._write_preview(tooltip_msg)
         else:
-            self.btn_convert.configure(state="normal", fg_color="#2ecc71", text="CONVERT & SAVE")
+            palette = PALETTES[self.current_palette_var.get()]
+            self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text="CONVERT & SAVE")
             self._set_status("Mode changed to: " + mode, "gray")
             # If the editor has no text, reset to standard greeting
             if not self.editor.get("1.0", "end-1c").strip():
@@ -402,7 +648,8 @@ class App(BaseClass): # type: ignore
         self._update_counts()
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
         self._set_status("Editor cleared", "gray")
-        self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color="#7eb8f5")
+        palette = PALETTES[self.current_palette_var.get()]
+        self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color=palette["text_accent_secondary"])
 
     def _update_counts(self, event=None):
         # Dùng full_content nếu file lớn hoặc bị chặn preview, nếu không thì lấy từ editor
@@ -430,7 +677,12 @@ class App(BaseClass): # type: ignore
         self.preview_box.configure(state="disabled")
 
     def _set_status(self, msg: str, color: str = "white"):
-        hex_colors = {"green": "#2ecc71", "red": "#e74c3c", "gray": "#8a8a9e", "orange": "#e67e22"}
+        hex_colors = {
+            "green": STYLE["status_green"], 
+            "red": STYLE["status_red"], 
+            "gray": STYLE["status_gray"], 
+            "orange": STYLE["status_orange"]
+        }
         target_color = hex_colors.get(color, color)
         self.status_lbl.configure(text=msg, text_color=target_color)
 
@@ -441,9 +693,10 @@ class App(BaseClass): # type: ignore
         if enabled:
             missing = self._get_missing_dependencies()
             if missing:
-                self.btn_convert.configure(state="disabled", fg_color="#c0392b", text="UNAVAILABLE")
+                self.btn_convert.configure(state="disabled", fg_color=STYLE["status_red"], text="UNAVAILABLE")
             else:
-                self.btn_convert.configure(state="normal", fg_color="#2ecc71", text="CONVERT & SAVE")
+                palette = PALETTES[self.current_palette_var.get()]
+                self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text="CONVERT & SAVE")
         else:
             self.btn_convert.configure(state="disabled")
 
@@ -470,7 +723,7 @@ class App(BaseClass): # type: ignore
         else:
             is_large_file = self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT
             if self.is_preview_blocked or is_large_file:
-                self.editor.configure(state="disabled", text_color="#8a8a9e")
+                self.editor.configure(state="disabled", text_color=STYLE["status_gray"])
             else:
                 self.editor.configure(state="normal", text_color="#f8f8f2")
 
@@ -527,7 +780,7 @@ class App(BaseClass): # type: ignore
 
             if result.missing_dependencies:
                 missing_str = " and ".join(result.missing_dependencies)
-                self.drop_lbl.configure(text=f"Failed: {missing_str} missing", text_color="#e74c3c")
+                self.drop_lbl.configure(text=f"Failed: {missing_str} missing", text_color=STYLE["status_red"])
                 self._set_status(f"Cannot load: {missing_str} missing!", "red")
                 tooltip_msg = f"Load Error:\n" \
                               f"-----------------------------------\n" \
@@ -539,7 +792,7 @@ class App(BaseClass): # type: ignore
             else:
                 short_err = result.error_short or "Load error"
                 detailed_err = result.error_detail or "An unknown error occurred during load."
-                self.drop_lbl.configure(text=f"Failed: {short_err}", text_color="#e74c3c")
+                self.drop_lbl.configure(text=f"Failed: {short_err}", text_color=STYLE["status_red"])
                 self._set_status(f"Load error: {short_err}", "red")
                 self._write_preview(f"LOAD ERROR:\n\n{detailed_err}")
                 from tkinter import messagebox
@@ -585,7 +838,7 @@ class App(BaseClass): # type: ignore
 
         # Update paths (Set state to 'Loading' in orange, NOT loaded yet)
         self.in_path.set(path)
-        self.drop_lbl.configure(text=f"Loading: {os.path.basename(path)}...", text_color="#e67e22")
+        self.drop_lbl.configure(text=f"Loading: {os.path.basename(path)}...", text_color=STYLE["status_orange"])
 
         def task():
             try:
@@ -656,10 +909,10 @@ class App(BaseClass): # type: ignore
                     self._write_preview(preview_msg)
                     if self.is_preview_blocked:
                         self._set_status("Loaded (preview skipped for performance)", "orange")
-                        self.drop_lbl.configure(text=f"Loaded (No preview): {os.path.basename(path)}", text_color="#2ecc71")
+                        self.drop_lbl.configure(text=f"Loaded (No preview): {os.path.basename(path)}", text_color=STYLE["status_green"])
                     else:
                         self._set_status("Loaded and extracted successfully!" if not is_truncated else "Loaded (preview truncated for performance)", "green")
-                        self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color="#2ecc71")
+                        self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(path)}", text_color=STYLE["status_green"])
                     
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
@@ -673,7 +926,7 @@ class App(BaseClass): # type: ignore
                     self.full_content = ""
                     self.editor.configure(state="normal")
                     self.editor.delete("1.0", "end")  # Clear editor content on load failure
-                    self.drop_lbl.configure(text=f"Failed: {err_msg}", text_color="#e74c3c")
+                    self.drop_lbl.configure(text=f"Failed: {err_msg}", text_color=STYLE["status_red"])
                     self._set_status(f"Load error: {err_msg}", "red")
                     self._write_preview(f"Load error details:\n{err_msg}")
                     self.progress_bar.stop()
@@ -793,9 +1046,10 @@ class App(BaseClass): # type: ignore
             except Exception:
                 pass
 
+        palette = PALETTES[self.current_palette_var.get()]
         self._toggle_ui_state(False)
         self.btn_convert.configure(text="Converting...")
-        self.btn_open_file.configure(state="disabled", fg_color="#1c1c24", text_color="#8a8a9e")
+        self.btn_open_file.configure(state="disabled", fg_color=palette["bg_component"], text_color=STYLE["status_gray"])
         self._set_status("Processing conversion and writing file...", "orange")
 
         # Show and start progress bar
@@ -833,8 +1087,9 @@ class App(BaseClass): # type: ignore
                     self._set_status(msg.split("\n")[0] if "\n" in msg else msg, color)
                     self._toggle_ui_state(True)
                     if color == "green":
+                        palette_active = PALETTES[self.current_palette_var.get()]
                         self.btn_open_file.configure(
-                            state="normal", fg_color="#3a86ff", hover_color="#2563eb", text_color="#ffffff"
+                            state="normal", fg_color=palette_active["btn_open_fg"], hover_color=palette_active["btn_open_hover"], text_color=STYLE["text_primary"]
                         )
                         self.is_dirty = False
 
@@ -889,18 +1144,110 @@ class App(BaseClass): # type: ignore
     def _on_drag_enter(self, event):
         if self.is_processing:
             return
-        self.load_bar.configure(border_color="#3a86ff", border_width=2)
-        self.drop_lbl.configure(text="Drop the file now!", text_color="#3a86ff")
+        palette = PALETTES[self.current_palette_var.get()]
+        self.load_bar.configure(border_color=palette["text_accent_primary"], border_width=2)
+        self.drop_lbl.configure(text="Drop the file now!", text_color=palette["text_accent_primary"])
 
     def _on_drag_leave(self, event=None):
         if self.is_processing:
             return
-        self.load_bar.configure(border_color="#2c2c35", border_width=1)
+        palette = PALETTES[self.current_palette_var.get()]
+        self.load_bar.configure(border_color=palette["border_color"], border_width=1)
         inp = self.in_path.get().strip()
         if inp:
-            self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(inp)}", text_color="#2ecc71")
+            self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(inp)}", text_color=STYLE["status_green"])
         else:
-            self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color="#7eb8f5")
+            self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color=palette["text_accent_secondary"])
+
+    def _change_appearance_mode(self, mode: str):
+        ctk.set_appearance_mode(mode)
+        # Immediately update the window background color based on resolved active mode color
+        palette = PALETTES[self.current_palette_var.get()]
+        appearance_mode = ctk.get_appearance_mode().lower()
+        mode_idx = 0 if appearance_mode == "light" else 1
+        bg_color = palette["bg_pane"][mode_idx]
+        try:
+            self.configure(bg=bg_color)
+        except Exception:
+            pass
+        # Update search highlights immediately based on the active mode (resolved manually)
+        self.after(50, self._update_highlight_colors)
+
+    def _change_palette(self, palette_name: str):
+        palette = PALETTES[palette_name]
+        
+        # 1. Update backgrounds and borders
+        appearance_mode = ctk.get_appearance_mode().lower()
+        mode_idx = 0 if appearance_mode == "light" else 1
+        bg_color = palette["bg_pane"][mode_idx]
+        try:
+            self.configure(bg=bg_color)
+        except Exception:
+            pass
+        self.header_frame.configure(fg_color=palette["bg_header"])
+        self.separator.configure(fg_color=palette["border_color"])
+        self.left_pane.configure(fg_color=palette["bg_pane"], border_color=palette["border_color"])
+        self.right_pane.configure(fg_color=palette["bg_pane"], border_color=palette["border_color"])
+        self.load_bar.configure(fg_color=palette["bg_component"], border_color=palette["border_color"])
+        self.config_frame.configure(fg_color=palette["bg_component"], border_color=palette["border_color"])
+        
+        # 2. Update titles
+        self.editor_title.configure(text_color=palette["text_accent_primary"])
+        self.output_title.configure(text_color=palette["text_accent_secondary"])
+        
+        # 3. Update editor text box & preview box
+        self.editor.configure(fg_color=palette["bg_pure_dark"], border_color=palette["border_color"])
+        self.preview_box.configure(fg_color=palette["bg_pure_dark"], border_color=palette["border_color"])
+        
+        # 4. Update entries
+        self.entry_out.configure(fg_color=palette["bg_component"], border_color=palette["border_color"])
+        if hasattr(self, "search_frame"):
+            self.search_frame.configure(fg_color=palette["bg_component"], border_color=palette["border_color"])
+            self.search_entry.configure(fg_color=palette["bg_component"], border_color=palette["border_color"])
+            self.replace_entry.configure(fg_color=palette["bg_component"], border_color=palette["border_color"])
+            
+        # 5. Update primary and secondary action buttons
+        missing = self._get_missing_dependencies()
+        if missing:
+            self.btn_convert.configure(fg_color=STYLE["status_red"], hover_color=STYLE["status_red"])
+        else:
+            self.btn_convert.configure(fg_color=palette["btn_convert_fg"], hover_color=palette["btn_convert_hover"])
+            
+        # Open file button: if normal state, use palette colors, else use component color
+        if self.btn_open_file.cget("state") == "normal":
+            self.btn_open_file.configure(
+                fg_color=palette["btn_open_fg"],
+                hover_color=palette["btn_open_hover"]
+            )
+        else:
+            self.btn_open_file.configure(
+                fg_color=palette["bg_component"]
+            )
+            
+        # 6. Update OptionMenus button/hover colors
+        self.mode_menu.configure(
+            fg_color=palette["btn_convert_fg"],
+            button_color=palette["btn_convert_fg"],
+            button_hover_color=palette["btn_convert_hover"]
+        )
+        
+        # 7. Update status progress color
+        self.progress_bar.configure(progress_color=palette["text_accent_secondary"])
+        
+        # 8. Update search highlight configurations manually
+        self._update_highlight_colors()
+
+    def _update_highlight_colors(self):
+        appearance_mode = ctk.get_appearance_mode().lower() # "light" or "dark"
+        mode_idx = 0 if appearance_mode == "light" else 1
+        
+        search_bg = STYLE["tag_search_bg"][mode_idx]
+        search_fg = STYLE["tag_search_fg"][mode_idx]
+        active_bg = STYLE["tag_active_bg"][mode_idx]
+        active_fg = STYLE["tag_active_fg"][mode_idx]
+        
+        self.editor._textbox.tag_config("search_highlight", background=search_bg, foreground=search_fg)
+        self.editor._textbox.tag_config("active_highlight", background=active_bg, foreground=active_fg)
 
     def _on_closing(self):
         if self.is_processing:
@@ -922,7 +1269,7 @@ class App(BaseClass): # type: ignore
         self.destroy()
 
     def _build_search_panel(self, parent_pane):
-        self.search_frame = ctk.CTkFrame(parent_pane, fg_color="#1c1c24", corner_radius=8, border_width=1, border_color="#2c2c35")
+        self.search_frame = ctk.CTkFrame(parent_pane, fg_color=STYLE["btn_utility_fg"], corner_radius=8, border_width=1, border_color=STYLE["btn_utility_border"])
         
         self.search_frame.columnconfigure(0, weight=0) # Labels
         self.search_frame.columnconfigure(1, weight=1) # Entries
@@ -931,13 +1278,13 @@ class App(BaseClass): # type: ignore
         self.search_query_var = ctk.StringVar()
         
         # Row 0: Find
-        find_lbl = ctk.CTkLabel(self.search_frame, text="Find:", font=ctk.CTkFont(family="Arial", size=12, weight="bold"), text_color="#8a8a9e")
+        find_lbl = ctk.CTkLabel(self.search_frame, text="Find:", font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"), text_color=STYLE["text_muted"])
         find_lbl.grid(row=0, column=0, padx=(12, 5), pady=(10, 5), sticky="w")
         
         self.search_entry = ctk.CTkEntry(
             self.search_frame, placeholder_text="Type text to search...",
             textvariable=self.search_query_var,
-            font=ctk.CTkFont(family="Arial", size=12),
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
             height=28
         )
         self.search_entry.grid(row=0, column=1, padx=5, pady=(10, 5), sticky="ew")
@@ -951,37 +1298,49 @@ class App(BaseClass): # type: ignore
         find_ctrl = ctk.CTkFrame(self.search_frame, fg_color="transparent")
         find_ctrl.grid(row=0, column=2, padx=(5, 12), pady=(10, 5), sticky="e")
         
-        self.match_lbl = ctk.CTkLabel(find_ctrl, text="0 of 0", font=ctk.CTkFont(family="Arial", size=12), text_color="#8a8a9e", width=55)
+        self.match_lbl = ctk.CTkLabel(find_ctrl, text="0 of 0", font=ctk.CTkFont(family=STYLE["font_family_body"], size=12), text_color=STYLE["text_muted"], width=55)
         self.match_lbl.pack(side="left", padx=5)
         
         self.btn_prev = ctk.CTkButton(
-            find_ctrl, text="▲", width=24, height=24, fg_color="#34495e", hover_color="#415b76",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            find_ctrl, text="▲", width=24, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._find_prev
         )
         self.btn_prev.pack(side="left", padx=2)
         
         self.btn_next = ctk.CTkButton(
-            find_ctrl, text="▼", width=24, height=24, fg_color="#34495e", hover_color="#415b76",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            find_ctrl, text="▼", width=24, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._find_next
         )
         self.btn_next.pack(side="left", padx=2)
         
         self.btn_close_search = ctk.CTkButton(
-            find_ctrl, text="×", width=24, height=24, fg_color="#c0392b", hover_color="#e74c3c",
-            font=ctk.CTkFont(family="Arial", size=14, weight="bold"),
+            find_ctrl, text="×", width=24, height=24, 
+            fg_color=STYLE["btn_clear_fg"], 
+            hover_color=STYLE["btn_clear_hover"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=14, weight="bold"),
             command=lambda: self._toggle_search_panel(show=False)
         )
         self.btn_close_search.pack(side="left", padx=(8, 0))
         
         # Row 1: Replace
-        replace_lbl = ctk.CTkLabel(self.search_frame, text="Replace:", font=ctk.CTkFont(family="Arial", size=12, weight="bold"), text_color="#8a8a9e")
+        replace_lbl = ctk.CTkLabel(self.search_frame, text="Replace:", font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"), text_color=STYLE["text_muted"])
         replace_lbl.grid(row=1, column=0, padx=(12, 5), pady=(5, 10), sticky="w")
         
         self.replace_entry = ctk.CTkEntry(
             self.search_frame, placeholder_text="Replace with...",
-            font=ctk.CTkFont(family="Arial", size=12),
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
             height=28
         )
         self.replace_entry.grid(row=1, column=1, padx=5, pady=(5, 10), sticky="ew")
@@ -993,15 +1352,25 @@ class App(BaseClass): # type: ignore
         replace_ctrl.grid(row=1, column=2, padx=(5, 12), pady=(5, 10), sticky="e")
         
         self.btn_replace = ctk.CTkButton(
-            replace_ctrl, text="Replace", width=70, height=24, fg_color="#2980b9", hover_color="#3498db",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            replace_ctrl, text="Replace", width=70, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._replace_current
         )
         self.btn_replace.pack(side="left", padx=2)
         
         self.btn_replace_all = ctk.CTkButton(
-            replace_ctrl, text="Replace All", width=80, height=24, fg_color="#27ae60", hover_color="#2ecc71",
-            font=ctk.CTkFont(family="Arial", size=11, weight="bold"),
+            replace_ctrl, text="Replace All", width=80, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._replace_all
         )
         self.btn_replace_all.pack(side="left", padx=2)

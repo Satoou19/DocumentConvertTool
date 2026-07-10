@@ -166,4 +166,9 @@ def validate_file_integrity(path: str) -> tuple[str, str] | None:
         if first_bytes != b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
             return ("Fake extension: not legacy Excel", "Fake file extension detected. The file content does not match the legacy Excel (.xls) format.")
 
+    elif ext == ".pdf":
+        # PDF file check
+        if not first_bytes.startswith(b"%PDF"):
+            return ("Fake extension: invalid format", "Fake file extension detected. The file content does not match the PDF format.")
+
     return None
