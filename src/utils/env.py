@@ -15,7 +15,7 @@ def setup_environment():
             pass
 
     # 2. Automatically configure Tcl/Tk environment paths for Windows Python interpreters
-    tcl_base = os.path.join(sys.prefix, "tcl")
+    tcl_base = os.path.join(sys.base_prefix, "tcl")
     if os.path.exists(tcl_base):
         for entry in os.listdir(tcl_base):
             full = os.path.join(tcl_base, entry)
