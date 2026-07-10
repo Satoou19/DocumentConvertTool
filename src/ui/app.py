@@ -760,11 +760,12 @@ class App(BaseClass): # type: ignore
             return
         # We allow loading any supported document type to auto-detect
         path = filedialog.askopenfilename(parent=self, filetypes=[
-            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv"),
+            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv *.pdf"),
             ("Markdown (*.md)", "*.md"),
             ("Excel (*.xlsx, *.xls)", "*.xlsx *.xls"),
             ("Word (*.docx)", "*.docx"),
             ("CSV (*.csv)", "*.csv"),
+            ("PDF (*.pdf)", "*.pdf"),
             ("All Files", "*.*")
         ])
         if path:
