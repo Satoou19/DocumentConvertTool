@@ -11,7 +11,8 @@ def parse_md_tables(content: str) -> list:
             for j in range(i-1, max(i-5, -1), -1):
                 prev = lines[j].strip()
                 if prev.startswith("#"):
-                    table_name = re.sub(r"^#+\s*", "", prev)[:31]
+                    table_name = re.sub(r"^#+\s*", "", prev)
+                    table_name = re.sub(r'[\\/?*\[\]:]', "_", table_name)[:31]
                     break
             table_lines = []
             while i < len(lines) and "|" in lines[i]:

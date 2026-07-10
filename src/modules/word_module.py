@@ -75,8 +75,11 @@ class WordModule(BaseDocumentModule):
                 para_text = "".join(para_parts).strip()
                 if not para_text:
                     para_text = text
+                
+                style_name = (block.style.name or "").lower() if block.style else ""
+                is_heading = style_name.startswith("heading ") or re.match(r"^(đề mục|tiêu đề)\s*\d", style_name)
 
-                if style_name.startswith("heading "):
+                if is_heading:
                     try:
                         level = int(style_name.split()[-1])
                         parts.append("#" * level + " " + para_text)
@@ -95,7 +98,7 @@ class WordModule(BaseDocumentModule):
                 for row in block.rows:
                     row_cells = []
                     for cell in row.cells:
-                        cell_text = cell.text.strip().replace("\n", " ")
+                        cell_text = cell.text.strip().replace("\n", " ").replace("|", "\\|")
                         row_cells.append(cell_text)
                     rows_data.append(row_cells)
                 
