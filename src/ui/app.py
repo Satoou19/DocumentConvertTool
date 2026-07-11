@@ -42,7 +42,7 @@ PALETTES = {
         "btn_convert_hover": ("#4c329a", "#5d3fd3"),
         "btn_open_fg": ("#0096b4", "#00b4d8"),
         "btn_open_hover": ("#007a93", "#0096b4"),
-        "bg_header": ("#eaeaea", "#13141a"),
+        "bg_header": ("#ebe4ff", "#161224"),
         "bg_pane": ("#eaeaea", "#111216"),
         "bg_component": ("#ffffff", "#181a22"),
         "bg_pure_dark": ("#ffffff", "#07080a"),
@@ -50,11 +50,11 @@ PALETTES = {
     },
     "Emerald Obsidian": {
         "text_accent_primary": ("#059669", "#10b981"),
-        "text_accent_secondary": ("#4b5563", "#64748b"),
+        "text_accent_secondary": ("#0f766e", "#14b8a6"),
         "btn_convert_fg": ("#059669", "#10b981"),
         "btn_convert_hover": ("#047857", "#059669"),
-        "btn_open_fg": ("#4b5563", "#64748b"),
-        "btn_open_hover": ("#374151", "#4b5563"),
+        "btn_open_fg": ("#0f766e", "#14b8a6"),
+        "btn_open_hover": ("#0d5c55", "#0f766e"),
         "bg_header": ("#e6f4ea", "#121815"),
         "bg_pane": ("#eaeaea", "#111216"),
         "bg_component": ("#ffffff", "#161c19"),
@@ -99,6 +99,7 @@ STYLE = {
     # Text colors
     "text_primary": ("#1d1d1f", "#ffffff"),
     "text_muted": ("#555555", "#8f93a7"),
+    "text_editor_fg": ("#1d1d1f", "#f8f8f2"),
     
     # Status colors (light_mode_color, dark_mode_color)
     "status_green": ("#0d9488", "#2ec4b6"),
@@ -196,6 +197,13 @@ class App(BaseClass): # type: ignore
         self.current_match_idx = -1
         self.search_panel_visible = False
         
+        # Register callback for appearance mode changes (to handle Windows titlebar dynamic sync)
+        try:
+            from customtkinter.windows.widgets.appearance_mode import AppearanceModeTracker
+            AppearanceModeTracker.add(self._update_titlebar_theme)
+        except Exception as e:
+            print(f"[DEBUG] Failed to register appearance mode callback: {e}")
+            
         self._build_ui()
         self._on_mode_change()
         
@@ -226,7 +234,7 @@ class App(BaseClass): # type: ignore
         subtitle_lbl.pack(side="left", padx=10, pady=16)
 
         # Theme controls frame on the right side of the header
-        theme_ctrl_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        theme_ctrl_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent", border_width=0)
         theme_ctrl_frame.pack(side="right", padx=25, pady=10)
         
         # Color Palette Dropdown
@@ -277,16 +285,19 @@ class App(BaseClass): # type: ignore
         self.separator = ctk.CTkFrame(self, fg_color=STYLE["btn_utility_border"], height=1, corner_radius=0, border_width=0)
         self.separator.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
 
-        # 2. Main Workspace Split (Left Pane & Right Pane)
-        workspace = ctk.CTkFrame(self, fg_color="transparent")
-        workspace.grid(row=2, column=0, sticky="nsew", padx=15, pady=15)
-        workspace.columnconfigure(0, weight=6, uniform="workspace_split") # Left Pane gets more weight
-        workspace.columnconfigure(1, weight=5, uniform="workspace_split") # Right Pane
-        workspace.rowconfigure(0, weight=1)
+        # 2. Main Workspace Wrapper to support rounded borders
+        self.workspace_outer = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0, border_width=0)
+        self.workspace_outer.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
+        
+        self.workspace = ctk.CTkFrame(self.workspace_outer, fg_color="transparent", corner_radius=0, border_width=0)
+        self.workspace.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+        self.workspace.columnconfigure(0, weight=6, uniform="workspace_split") # Left Pane gets more weight
+        self.workspace.columnconfigure(1, weight=5, uniform="workspace_split") # Right Pane
+        self.workspace.rowconfigure(0, weight=1)
 
         # ── LEFT PANE: Input Editor & Overview ────────────────────────────────
         self.left_pane = ctk.CTkFrame(
-            workspace, 
+            self.workspace, 
             fg_color=STYLE["text_primary"], 
             corner_radius=12, 
             border_width=1, 
@@ -319,13 +330,6 @@ class App(BaseClass): # type: ignore
         self.load_bar.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
         self.load_bar.pack_propagate(False)
         
-        self.drop_lbl = ctk.CTkLabel(
-            self.load_bar, text="Drag & drop file here or click 'Browse' to load content...",
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12), 
-            text_color=STYLE["text_muted"]
-        )
-        self.drop_lbl.pack(side="left", padx=15, fill="both", expand=True)
-
         self.btn_browse_in = ctk.CTkButton(
             self.load_bar, text="Browse", width=75, height=28,
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"), 
@@ -336,7 +340,14 @@ class App(BaseClass): # type: ignore
             text_color=STYLE["text_primary"],
             command=self._browse_input
         )
-        self.btn_browse_in.pack(side="right", padx=8, pady=8)
+        self.btn_browse_in.place(relx=1.0, rely=0.5, anchor="e", x=-8)
+
+        self.drop_lbl = ctk.CTkLabel(
+            self.load_bar, text="Drag & drop file here or click 'Browse' to load content...",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12), 
+            text_color=STYLE["text_muted"]
+        )
+        self.drop_lbl.place(relx=0.0, rely=0.5, anchor="w", x=15)
 
         # Register Drag & Drop with active drag hover animations
         if HAS_DND:
@@ -350,7 +361,7 @@ class App(BaseClass): # type: ignore
         self.editor = ctk.CTkTextbox(
             self.left_pane, 
             fg_color=STYLE["btn_utility_fg"], 
-            text_color="#f8f8f2",
+            text_color=STYLE["text_editor_fg"],
             font=ctk.CTkFont(family=STYLE["font_family_mono"], size=13),
             border_width=1, 
             border_color=STYLE["btn_utility_border"], 
@@ -372,7 +383,7 @@ class App(BaseClass): # type: ignore
         self.editor.bind("<Control-Shift-Z>", self._redo)
 
         # Editor Footer (Stats & Actions)
-        editor_footer = ctk.CTkFrame(self.left_pane, fg_color="transparent")
+        editor_footer = ctk.CTkFrame(self.left_pane, fg_color="transparent", border_width=0)
         editor_footer.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
         
         self.char_lbl = ctk.CTkLabel(
@@ -437,7 +448,7 @@ class App(BaseClass): # type: ignore
 
         # ── RIGHT PANE: Output Configuration, Preview & Actions ───────────────
         self.right_pane = ctk.CTkFrame(
-            workspace, 
+            self.workspace, 
             fg_color=STYLE["text_primary"], 
             corner_radius=12, 
             border_width=1, 
@@ -469,39 +480,33 @@ class App(BaseClass): # type: ignore
         self.config_frame.columnconfigure(0, weight=1)
 
         # Mode row
-        row_mode = ctk.CTkFrame(self.config_frame, fg_color="transparent")
+        row_mode = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
         row_mode.pack(fill="x", padx=12, pady=(10, 5))
         ctk.CTkLabel(
-            row_mode, text="Mode:", width=70, anchor="w", 
+            row_mode, text="Mode:", width=90, anchor="w", 
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
             text_color=STYLE["text_muted"]
         ).pack(side="left")
         
         self.mode_menu = ctk.CTkOptionMenu(
             row_mode, values=list(MODES.keys()), variable=self.mode_var,
-            width=200, font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
             fg_color=STYLE["text_primary"],
             button_color=STYLE["text_primary"],
             button_hover_color=STYLE["text_primary"],
             command=self._on_mode_change
         )
-        self.mode_menu.pack(side="left", padx=5)
+        self.mode_menu.pack(side="left", fill="x", expand=True, padx=5)
 
         # Path row
-        row_out = ctk.CTkFrame(self.config_frame, fg_color="transparent")
+        row_out = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
         row_out.pack(fill="x", padx=12, pady=(5, 10))
         self.lbl_out = ctk.CTkLabel(
-            row_out, text="Output:", width=70, anchor="w", 
+            row_out, text="Output:", width=90, anchor="w", 
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
             text_color=STYLE["text_muted"]
         )
         self.lbl_out.pack(side="left")
-        
-        self.entry_out = ctk.CTkEntry(
-            row_out, textvariable=self.out_path, placeholder_text="Select save location...",
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12)
-        )
-        self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
         
         self.btn_browse_out = ctk.CTkButton(
             row_out, text="Browse", width=65, height=28,
@@ -515,11 +520,17 @@ class App(BaseClass): # type: ignore
         )
         self.btn_browse_out.pack(side="right", padx=2)
 
+        self.entry_out = ctk.CTkEntry(
+            row_out, textvariable=self.out_path, placeholder_text="Select save location...",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12)
+        )
+        self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
+
         # Output Preview & Logs Workspace
         self.preview_box = ctk.CTkTextbox(
             self.right_pane, 
             fg_color=STYLE["btn_utility_fg"], 
-            text_color=STYLE["text_muted"],
+            text_color=STYLE["text_editor_fg"],
             font=ctk.CTkFont(family=STYLE["font_family_mono"], size=12),
             border_width=1, 
             border_color=STYLE["btn_utility_border"], 
@@ -529,7 +540,7 @@ class App(BaseClass): # type: ignore
         self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
 
         # Large Action Button & Status Info
-        action_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent")
+        action_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", border_width=0)
         action_frame.grid(row=3, column=0, sticky="ew", padx=15, pady=(5, 12))
         action_frame.columnconfigure(0, weight=3)
         action_frame.columnconfigure(1, weight=2)
@@ -571,6 +582,7 @@ class App(BaseClass): # type: ignore
         # Apply the default theme colors
         ctk.set_appearance_mode(self.appearance_mode_var.get())
         self._change_palette("Violet Cyberpunk")
+        self._update_titlebar_theme()
         
         # Bind keyboard shortcuts on the editor widget
         self.editor.bind("<Control-f>", self._shortcut_find)
@@ -615,7 +627,7 @@ class App(BaseClass): # type: ignore
         missing = self._get_missing_dependencies()
         
         if missing:
-            self.btn_convert.configure(state="disabled", fg_color=STYLE["status_red"], text="UNAVAILABLE")
+            self.btn_convert.configure(state="disabled", fg_color=STYLE["status_red"], text_color_disabled=("#ffffff", "#ffffff"), text="UNAVAILABLE")
             missing_str = ", ".join(missing)
             self._set_status(f"Missing dependency: {missing_str}", "red")
             
@@ -629,8 +641,8 @@ class App(BaseClass): # type: ignore
             self._write_preview(tooltip_msg)
         else:
             palette = PALETTES[self.current_palette_var.get()]
-            self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text="CONVERT & SAVE")
-            self._set_status("Mode changed to: " + mode, "gray")
+            self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="CONVERT & SAVE")
+            self._set_status("Mode changed to: " + mode, "primary")
             # If the editor has no text, reset to standard greeting
             if not self.editor.get("1.0", "end-1c").strip():
                 self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
@@ -638,7 +650,7 @@ class App(BaseClass): # type: ignore
     def _clear_editor(self):
         if self.is_processing:
             return
-        self.editor.configure(state="normal", text_color="#f8f8f2") # Mở khóa editor và đặt lại màu chữ
+        self.editor.configure(state="normal", text_color=STYLE["text_editor_fg"]) # Mở khóa editor và đặt lại màu chữ
         self.editor.delete("1.0", "end")
         self.editor.edit_reset()  # Reset undo stack after manual clearing
         self.in_path.set("")
@@ -647,7 +659,7 @@ class App(BaseClass): # type: ignore
         self.is_dirty = False
         self._update_counts()
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
-        self._set_status("Editor cleared", "gray")
+        self._set_status("Editor cleared", "primary")
         palette = PALETTES[self.current_palette_var.get()]
         self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color=palette["text_accent_secondary"])
 
@@ -676,14 +688,17 @@ class App(BaseClass): # type: ignore
         self.preview_box.insert("1.0", msg)
         self.preview_box.configure(state="disabled")
 
-    def _set_status(self, msg: str, color: str = "white"):
+    def _set_status(self, msg: str, color: str = "primary"):
         hex_colors = {
+            "primary": STYLE["text_primary"],
             "green": STYLE["status_green"], 
             "red": STYLE["status_red"], 
             "gray": STYLE["status_gray"], 
             "orange": STYLE["status_orange"]
         }
         target_color = hex_colors.get(color, color)
+        if target_color == "white":
+            target_color = STYLE["text_primary"]
         self.status_lbl.configure(text=msg, text_color=target_color)
 
     def _toggle_ui_state(self, enabled: bool):
@@ -693,10 +708,10 @@ class App(BaseClass): # type: ignore
         if enabled:
             missing = self._get_missing_dependencies()
             if missing:
-                self.btn_convert.configure(state="disabled", fg_color=STYLE["status_red"], text="UNAVAILABLE")
+                self.btn_convert.configure(state="disabled", fg_color=STYLE["status_red"], text_color_disabled=("#ffffff", "#ffffff"), text="UNAVAILABLE")
             else:
                 palette = PALETTES[self.current_palette_var.get()]
-                self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text="CONVERT & SAVE")
+                self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="CONVERT & SAVE")
         else:
             self.btn_convert.configure(state="disabled")
 
@@ -725,7 +740,7 @@ class App(BaseClass): # type: ignore
             if self.is_preview_blocked or is_large_file:
                 self.editor.configure(state="disabled", text_color=STYLE["status_gray"])
             else:
-                self.editor.configure(state="normal", text_color="#f8f8f2")
+                self.editor.configure(state="normal", text_color=STYLE["text_editor_fg"])
 
     # ── Load file on drop or browse ───────────────────────────────────────────
 
@@ -760,11 +775,12 @@ class App(BaseClass): # type: ignore
             return
         # We allow loading any supported document type to auto-detect
         path = filedialog.askopenfilename(parent=self, filetypes=[
-            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv"),
+            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv *.pdf"),
             ("Markdown (*.md)", "*.md"),
             ("Excel (*.xlsx, *.xls)", "*.xlsx *.xls"),
             ("Word (*.docx)", "*.docx"),
             ("CSV (*.csv)", "*.csv"),
+            ("PDF (*.pdf)", "*.pdf"),
             ("All Files", "*.*")
         ])
         if path:
@@ -1089,7 +1105,7 @@ class App(BaseClass): # type: ignore
                     if color == "green":
                         palette_active = PALETTES[self.current_palette_var.get()]
                         self.btn_open_file.configure(
-                            state="normal", fg_color=palette_active["btn_open_fg"], hover_color=palette_active["btn_open_hover"], text_color=STYLE["text_primary"]
+                            state="normal", fg_color=palette_active["btn_open_fg"], hover_color=palette_active["btn_open_hover"], text_color=("#ffffff", "#ffffff")
                         )
                         self.is_dirty = False
 
@@ -1161,17 +1177,57 @@ class App(BaseClass): # type: ignore
 
     def _change_appearance_mode(self, mode: str):
         ctk.set_appearance_mode(mode)
-        # Immediately update the window background color based on resolved active mode color
-        palette = PALETTES[self.current_palette_var.get()]
+        # Schedule the full background and title bar update to allow CustomTkinter's system theme resolver to settle
+        self.after(100, self._execute_appearance_mode_update)
+
+    def _update_titlebar_theme(self, _mode_arg=None):
+        # Schedule the full background and title bar update to allow CustomTkinter's system theme resolver to settle
+        self.after(100, self._execute_appearance_mode_update)
+
+    def _execute_appearance_mode_update(self):
+        # 1. Resolve current active mode
         appearance_mode = ctk.get_appearance_mode().lower()
         mode_idx = 0 if appearance_mode == "light" else 1
+        
+        # 2. Update window background
+        palette = PALETTES[self.current_palette_var.get()]
         bg_color = palette["bg_pane"][mode_idx]
         try:
             self.configure(bg=bg_color)
         except Exception:
             pass
-        # Update search highlights immediately based on the active mode (resolved manually)
-        self.after(50, self._update_highlight_colors)
+            
+        # 3. Update workspace backgrounds
+        self.workspace_outer.configure(fg_color=palette["bg_pane"])
+        self.workspace.configure(fg_color=palette["bg_pane"])
+        self.left_pane.configure(fg_color=palette["bg_pane"], border_color=palette["border_color"])
+        self.right_pane.configure(fg_color=palette["bg_pane"], border_color=palette["border_color"])
+        
+        # 4. Update search highlights
+        self._update_highlight_colors()
+        
+        # 5. Update Windows title bar theme
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            is_dark = (appearance_mode == "dark")
+            hwnd = self.winfo_id()
+            hwnd = ctypes.windll.user32.GetAncestor(hwnd, 2) # GA_ROOT = 2
+            
+            for attr in (20, 19):
+                value = ctypes.c_int(1 if is_dark else 0)
+                hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    attr,
+                    ctypes.byref(value),
+                    ctypes.sizeof(value)
+                )
+                if hr == 0:
+                    break
+            self.update_idletasks()
+        except Exception as e:
+            print(f"[DEBUG] Failed to set titlebar color: {e}")
 
     def _change_palette(self, palette_name: str):
         palette = PALETTES[palette_name]
@@ -1186,6 +1242,8 @@ class App(BaseClass): # type: ignore
             pass
         self.header_frame.configure(fg_color=palette["bg_header"])
         self.separator.configure(fg_color=palette["border_color"])
+        self.workspace_outer.configure(fg_color=palette["bg_pane"])
+        self.workspace.configure(fg_color=palette["bg_pane"])
         self.left_pane.configure(fg_color=palette["bg_pane"], border_color=palette["border_color"])
         self.right_pane.configure(fg_color=palette["bg_pane"], border_color=palette["border_color"])
         self.load_bar.configure(fg_color=palette["bg_component"], border_color=palette["border_color"])
@@ -1209,15 +1267,16 @@ class App(BaseClass): # type: ignore
         # 5. Update primary and secondary action buttons
         missing = self._get_missing_dependencies()
         if missing:
-            self.btn_convert.configure(fg_color=STYLE["status_red"], hover_color=STYLE["status_red"])
+            self.btn_convert.configure(fg_color=STYLE["status_red"], hover_color=STYLE["status_red"], text_color_disabled=("#ffffff", "#ffffff"))
         else:
-            self.btn_convert.configure(fg_color=palette["btn_convert_fg"], hover_color=palette["btn_convert_hover"])
+            self.btn_convert.configure(fg_color=palette["btn_convert_fg"], hover_color=palette["btn_convert_hover"], text_color=("#ffffff", "#ffffff"))
             
         # Open file button: if normal state, use palette colors, else use component color
         if self.btn_open_file.cget("state") == "normal":
             self.btn_open_file.configure(
                 fg_color=palette["btn_open_fg"],
-                hover_color=palette["btn_open_hover"]
+                hover_color=palette["btn_open_hover"],
+                text_color=("#ffffff", "#ffffff")
             )
         else:
             self.btn_open_file.configure(
@@ -1228,7 +1287,20 @@ class App(BaseClass): # type: ignore
         self.mode_menu.configure(
             fg_color=palette["btn_convert_fg"],
             button_color=palette["btn_convert_fg"],
-            button_hover_color=palette["btn_convert_hover"]
+            button_hover_color=palette["btn_convert_hover"],
+            text_color=("#ffffff", "#ffffff")
+        )
+        self.palette_menu.configure(
+            fg_color=palette["btn_convert_fg"],
+            button_color=palette["btn_convert_fg"],
+            button_hover_color=palette["btn_convert_hover"],
+            text_color=("#ffffff", "#ffffff")
+        )
+        self.appearance_menu.configure(
+            fg_color=palette["btn_convert_fg"],
+            button_color=palette["btn_convert_fg"],
+            button_hover_color=palette["btn_convert_hover"],
+            text_color=("#ffffff", "#ffffff")
         )
         
         # 7. Update status progress color
@@ -1295,7 +1367,7 @@ class App(BaseClass): # type: ignore
         self.search_query_var.trace_add("write", lambda *args: self._perform_search())
         
         # Controls Frame for Find Row
-        find_ctrl = ctk.CTkFrame(self.search_frame, fg_color="transparent")
+        find_ctrl = ctk.CTkFrame(self.search_frame, fg_color="transparent", border_width=0)
         find_ctrl.grid(row=0, column=2, padx=(5, 12), pady=(10, 5), sticky="e")
         
         self.match_lbl = ctk.CTkLabel(find_ctrl, text="0 of 0", font=ctk.CTkFont(family=STYLE["font_family_body"], size=12), text_color=STYLE["text_muted"], width=55)
@@ -1348,7 +1420,7 @@ class App(BaseClass): # type: ignore
         self.replace_entry.bind("<Escape>", lambda e: self._toggle_search_panel(show=False))
         
         # Controls Frame for Replace Row
-        replace_ctrl = ctk.CTkFrame(self.search_frame, fg_color="transparent")
+        replace_ctrl = ctk.CTkFrame(self.search_frame, fg_color="transparent", border_width=0)
         replace_ctrl.grid(row=1, column=2, padx=(5, 12), pady=(5, 10), sticky="e")
         
         self.btn_replace = ctk.CTkButton(
