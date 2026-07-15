@@ -16,137 +16,152 @@ class WordModule(BaseDocumentModule):
 
     @property
     def required_dependencies(self) -> list[str]:
-        return ["python-docx"]
+        return ["python-docx", "markitdown"]
 
     def load_to_markdown(self, file_path: str) -> str:
         """Extracts Word .docx to clean Markdown text, preserving tables, headings, bold/italic styles, and lists."""
-        from docx.oxml.text.paragraph import CT_P
-        from docx.oxml.table import CT_Tbl
-        from docx.text.paragraph import Paragraph
-        from docx.table import Table
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
 
-        if not zipfile.is_zipfile(file_path):
-            return "⚠️ File Validation Error: Invalid file. Please select a valid DOCX document."
+        try:
+            from docx.oxml.text.paragraph import CT_P
+            from docx.oxml.table import CT_Tbl
+            from docx.text.paragraph import Paragraph
+            from docx.table import Table
 
-        doc = docx.Document(file_path)
-        parts = []
+            if not zipfile.is_zipfile(file_path):
+                return "⚠️ File Validation Error: Invalid file. Please select a valid DOCX document."
 
-        def iter_block_items(parent):
-            parent_elm = parent.element.body
-            for child in parent_elm.iterchildren():
-                if isinstance(child, CT_P):
-                    yield Paragraph(child, parent)
-                elif isinstance(child, CT_Tbl):
-                    yield Table(child, parent)
+            doc = docx.Document(file_path)
+            parts = []
 
-        from docx.oxml.ns import qn
-        from src.core.converters import wrap_text_style
+            def iter_block_items(parent):
+                parent_elm = parent.element.body
+                for child in parent_elm.iterchildren():
+                    if isinstance(child, CT_P):
+                        yield Paragraph(child, parent)
+                    elif isinstance(child, CT_Tbl):
+                        yield Table(child, parent)
 
-        for block in iter_block_items(doc):
-            if isinstance(block, Paragraph):
-                style_name = (block.style.name or "").lower() if block.style else ""
-                
-                def run_contains_image(run):
-                    xml = getattr(run._element, "xml", "")
-                    return "<w:drawing" in xml or "<w:pict" in xml or "<a:blip" in xml
+            from docx.oxml.ns import qn
+            from src.core.converters import wrap_text_style
 
-                para_parts = []
-                for child in block._element:
-                    if child.tag == qn('w:r'):
-                        run = docx.text.run.Run(child, block)
-                        if run_contains_image(run):
-                            para_parts.append("[image]")
+            for block in iter_block_items(doc):
+                if isinstance(block, Paragraph):
+                    style_name = (block.style.name or "").lower() if block.style else ""
+                    
+                    def run_contains_image(run):
+                        xml = getattr(run._element, "xml", "")
+                        return "<w:drawing" in xml or "<w:pict" in xml or "<a:blip" in xml
+
+                    para_parts = []
+                    for child in block._element:
+                        if child.tag == qn('w:r'):
+                            run = docx.text.run.Run(child, block)
+                            if run_contains_image(run):
+                                para_parts.append("[image]")
+                                continue
+                            if not run.text:
+                                continue
+                            formatted = wrap_text_style(
+                                run.text,
+                                bold=run.bold,
+                                italic=run.italic,
+                                strike=run.font.strike,
+                                underline=run.font.underline
+                            )
+                            para_parts.append(formatted)
+                        elif child.tag == qn('w:hyperlink'):
+                            r_id = child.get(qn('r:id'))
+                            url = ""
+                            if r_id:
+                                try:
+                                    url = block.part.rels[r_id].target_ref
+                                except Exception:
+                                    pass
+                            link_parts = []
+                            for sub_child in child:
+                                if sub_child.tag == qn('w:r'):
+                                    run = docx.text.run.Run(sub_child, block)
+                                    if run_contains_image(run):
+                                        link_parts.append("[image]")
+                                        continue
+                                    if not run.text:
+                                        continue
+                                    formatted = wrap_text_style(
+                                        run.text,
+                                        bold=run.bold,
+                                        italic=run.italic,
+                                        strike=run.font.strike,
+                                        underline=run.font.underline
+                                    )
+                                    link_parts.append(formatted)
+                            link_text = "".join(link_parts)
+                            if link_text:
+                                if url:
+                                    para_parts.append(f"[{link_text}]({url})")
+                                else:
+                                    para_parts.append(link_text)
+                    
+                    para_text = "".join(para_parts).strip()
+                    if not para_text:
+                        if block.text.strip():
+                            para_text = block.text.strip()
+                        else:
+                            parts.append("")
                             continue
-                        if not run.text:
-                            continue
-                        formatted = wrap_text_style(
-                            run.text,
-                            bold=run.bold,
-                            italic=run.italic,
-                            strike=run.font.strike,
-                            underline=run.font.underline
-                        )
-                        para_parts.append(formatted)
-                    elif child.tag == qn('w:hyperlink'):
-                        r_id = child.get(qn('r:id'))
-                        url = ""
-                        if r_id:
-                            try:
-                                url = block.part.rels[r_id].target_ref
-                            except Exception:
-                                pass
-                        link_parts = []
-                        for sub_child in child:
-                            if sub_child.tag == qn('w:r'):
-                                run = docx.text.run.Run(sub_child, block)
-                                if run_contains_image(run):
-                                    link_parts.append("[image]")
-                                    continue
-                                if not run.text:
-                                    continue
-                                formatted = wrap_text_style(
-                                    run.text,
-                                    bold=run.bold,
-                                    italic=run.italic,
-                                    strike=run.font.strike,
-                                    underline=run.font.underline
-                                )
-                                link_parts.append(formatted)
-                        link_text = "".join(link_parts)
-                        if link_text:
-                            if url:
-                                para_parts.append(f"[{link_text}]({url})")
-                            else:
-                                para_parts.append(link_text)
-                
-                para_text = "".join(para_parts).strip()
-                if not para_text:
-                    if block.text.strip():
-                        para_text = block.text.strip()
+                    
+                    is_heading = style_name.startswith("heading") or re.match(r"^(đề mục|tiêu đề)\s*\d", style_name)
+
+                    if is_heading:
+                        m = re.search(r"\d+", style_name)
+                        level = int(m.group(0)) if m else 1
+                        parts.append("#" * level + " " + para_text)
+                    elif "bullet" in style_name:
+                        m = re.search(r"\d+", style_name)
+                        level = int(m.group(0)) if m else 1
+                        indent = "  " * (level - 1)
+                        parts.append(indent + "- " + para_text)
+                    elif "number" in style_name or style_name.startswith("list"):
+                        m = re.search(r"\d+", style_name)
+                        level = int(m.group(0)) if m else 1
+                        indent = "  " * (level - 1)
+                        parts.append(indent + "1. " + para_text)
                     else:
-                        parts.append("")
-                        continue
-                
-                is_heading = style_name.startswith("heading") or re.match(r"^(đề mục|tiêu đề)\s*\d", style_name)
+                        parts.append(para_text)
 
-                if is_heading:
-                    m = re.search(r"\d+", style_name)
-                    level = int(m.group(0)) if m else 1
-                    parts.append("#" * level + " " + para_text)
-                elif "bullet" in style_name:
-                    m = re.search(r"\d+", style_name)
-                    level = int(m.group(0)) if m else 1
-                    indent = "  " * (level - 1)
-                    parts.append(indent + "- " + para_text)
-                elif "number" in style_name or style_name.startswith("list"):
-                    m = re.search(r"\d+", style_name)
-                    level = int(m.group(0)) if m else 1
-                    indent = "  " * (level - 1)
-                    parts.append(indent + "1. " + para_text)
-                else:
-                    parts.append(para_text)
+                elif isinstance(block, Table):
+                    table_parts = []
+                    rows_data = []
+                    for row in block.rows:
+                        row_cells = []
+                        for cell in row.cells:
+                            cell_text = cell.text.strip().replace("\n", " ").replace("|", "\\|")
+                            row_cells.append(cell_text)
+                        rows_data.append(row_cells)
+                    
+                    if rows_data:
+                        header = "| " + " | ".join(rows_data[0]) + " |"
+                        sep = "| " + " | ".join("---" for _ in rows_data[0]) + " |"
+                        table_parts.append(header)
+                        table_parts.append(sep)
+                        for row in rows_data[1:]:
+                            table_parts.append("| " + " | ".join(row) + " |")
+                        parts.append("\n".join(table_parts))
 
-            elif isinstance(block, Table):
-                table_parts = []
-                rows_data = []
-                for row in block.rows:
-                    row_cells = []
-                    for cell in row.cells:
-                        cell_text = cell.text.strip().replace("\n", " ").replace("|", "\\|")
-                        row_cells.append(cell_text)
-                    rows_data.append(row_cells)
-                
-                if rows_data:
-                    header = "| " + " | ".join(rows_data[0]) + " |"
-                    sep = "| " + " | ".join("---" for _ in rows_data[0]) + " |"
-                    table_parts.append(header)
-                    table_parts.append(sep)
-                    for row in rows_data[1:]:
-                        table_parts.append("| " + " | ".join(row) + " |")
-                    parts.append("\n".join(table_parts))
-                    parts.append("")
-
-        return "\n\n".join(parts)
+            return "\n\n".join(parts)
+        except Exception as e:
+            import sys
+            print(f"[DEBUG] Custom Word parsing failed: {e}. Falling back to markitdown.", file=sys.stderr)
+            try:
+                from markitdown import MarkItDown
+                md = MarkItDown()
+                result = md.convert(file_path)
+                if not result or not result.text_content:
+                    return "*(Empty Word Document)*"
+                return result.text_content
+            except Exception as inner_e:
+                raise RuntimeError(f"Word Ingestion Error: Failed to extract text layer from DOCX file. Detail: {str(inner_e)}")
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
         """Converts Markdown text to formatted Word document."""

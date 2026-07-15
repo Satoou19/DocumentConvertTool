@@ -15,81 +15,97 @@ class ExcelModule(BaseDocumentModule):
 
     @property
     def required_dependencies(self) -> list[str]:
-        return ["pandas", "openpyxl"]
+        return ["pandas", "openpyxl", "markitdown"]
 
     def load_to_markdown(self, file_path: str) -> str:
         """Extracts Excel sheets into clean Markdown tables, preserving bold, italic, strike, underline, and hyperlinks."""
-        import openpyxl
-        from src.core.converters import wrap_text_style
-        from openpyxl.cell.rich_text import CellRichText
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
 
-        wb = openpyxl.load_workbook(file_path, data_only=True, rich_text=True)
-        parts = []
-        for name in wb.sheetnames:
-            ws = wb[name]
-            parts.append(f"## {name}\n")
-            
-            rows = list(ws.iter_rows(values_only=False))
-            if not rows:
-                parts.append("*(Empty Table)*\n")
-                continue
+        try:
+            import openpyxl
+            from src.core.converters import wrap_text_style
+            from openpyxl.cell.rich_text import CellRichText
+
+            wb = openpyxl.load_workbook(file_path, data_only=True, rich_text=True)
+            parts = []
+            for name in wb.sheetnames:
+                ws = wb[name]
+                parts.append(f"## {name}\n")
                 
-            grid = []
-            for row in rows:
-                row_cells = []
-                for cell in row:
-                    val = cell.value
-                    val_str = ""
+                rows = list(ws.iter_rows(values_only=False))
+                if not rows:
+                    parts.append("*(Empty Table)*\n")
+                    continue
                     
-                    if isinstance(val, CellRichText):
-                        formatted_parts = []
-                        for el in val:
-                            if isinstance(el, str):
-                                formatted_parts.append(el)
-                            else:
-                                font = el.font
-                                bold = font.b if font else False
-                                italic = font.i if font else False
+                grid = []
+                for row in rows:
+                    row_cells = []
+                    for cell in row:
+                        val = cell.value
+                        val_str = ""
+                        
+                        if isinstance(val, CellRichText):
+                            formatted_parts = []
+                            for el in val:
+                                if isinstance(el, str):
+                                    formatted_parts.append(el)
+                                else:
+                                    font = el.font
+                                    bold = font.b if font else False
+                                    italic = font.i if font else False
+                                    strike = font.strike if font else False
+                                    underline = bool(font.u) if font and font.u else False
+                                    code = font.rFont == "Consolas" if font and font.rFont else False
+                                    formatted_parts.append(wrap_text_style(el.text, bold=bold, italic=italic, strike=strike, underline=underline, code=code))
+                            val_str = "".join(formatted_parts).strip()
+                        else:
+                            val_str = str(val).strip() if val is not None else ""
+                            if val_str and cell.has_style:
+                                font = cell.font
+                                bold = font.bold if font else False
+                                italic = font.italic if font else False
                                 strike = font.strike if font else False
-                                underline = bool(font.u) if font and font.u else False
-                                code = font.rFont == "Consolas" if font and font.rFont else False
-                                formatted_parts.append(wrap_text_style(el.text, bold=bold, italic=italic, strike=strike, underline=underline, code=code))
-                        val_str = "".join(formatted_parts).strip()
-                    else:
-                        val_str = str(val).strip() if val is not None else ""
-                        if val_str and cell.has_style:
-                            font = cell.font
-                            bold = font.bold if font else False
-                            italic = font.italic if font else False
-                            strike = font.strike if font else False
-                            underline = bool(font.underline) if font and font.underline else False
-                            code = font.name == "Consolas" if font and font.name else False
+                                underline = bool(font.underline) if font and font.underline else False
+                                code = font.name == "Consolas" if font and font.name else False
+                                
+                                val_str = wrap_text_style(val_str, bold=bold, italic=italic, strike=strike, underline=underline, code=code)
                             
-                            val_str = wrap_text_style(val_str, bold=bold, italic=italic, strike=strike, underline=underline, code=code)
-                        
-                    if val_str and cell.hyperlink and cell.hyperlink.target:
-                        val_str = f"[{val_str}]({cell.hyperlink.target})"
-                        
-                    val_str = val_str.replace("\n", " ").replace("|", "\\|")
-                    row_cells.append(val_str)
-                grid.append(row_cells)
+                        if val_str and cell.hyperlink and cell.hyperlink.target:
+                            val_str = f"[{val_str}]({cell.hyperlink.target})"
+                            
+                        val_str = val_str.replace("\n", " ").replace("|", "\\|")
+                        row_cells.append(val_str)
+                    grid.append(row_cells)
+                    
+                while grid and all(not c for c in grid[-1]):
+                    grid.pop()
+                    
+                if not grid:
+                    parts.append("*(Empty Table)*\n")
+                    continue
+                    
+                header = "| " + " | ".join(grid[0]) + " |"
+                sep = "| " + " | ".join("---" for _ in grid[0]) + " |"
+                parts.append(header)
+                parts.append(sep)
+                for row in grid[1:]:
+                    parts.append("| " + " | ".join(row) + " |")
+                parts.append("")
                 
-            while grid and all(not c for c in grid[-1]):
-                grid.pop()
-                
-            if not grid:
-                parts.append("*(Empty Table)*\n")
-                continue
-                
-            header = "| " + " | ".join(grid[0]) + " |"
-            sep = "| " + " | ".join("---" for _ in grid[0]) + " |"
-            parts.append(header)
-            parts.append(sep)
-            for row in grid[1:]:
-                parts.append("| " + " | ".join(row) + " |")
-            parts.append("")
-            
-        return "\n".join(parts)
+            return "\n".join(parts)
+        except Exception as e:
+            import sys
+            print(f"[DEBUG] Custom Excel parsing failed: {e}. Falling back to markitdown.", file=sys.stderr)
+            try:
+                from markitdown import MarkItDown
+                md = MarkItDown()
+                result = md.convert(file_path)
+                if not result or not result.text_content:
+                    return "*(Empty Excel Workbook)*"
+                return result.text_content
+            except Exception as inner_e:
+                raise RuntimeError(f"Excel Ingestion Error: Failed to extract text layer from spreadsheet file. Detail: {str(inner_e)}")
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
         """Converts Markdown tables to formatted Excel spreadsheet."""
