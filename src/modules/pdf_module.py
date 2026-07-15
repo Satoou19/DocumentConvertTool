@@ -267,7 +267,76 @@ class PDFModule(BaseDocumentModule):
                 raise RuntimeError(f"PDF Ingestion Error: Failed to extract text layer from PDF file. Detail: {str(inner_e)}")
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
-        """MD -> PDF conversion is not supported at this stage."""
-        raise NotImplementedError("MD → PDF requires html_module first (MD → HTML → PDF via WeasyPrint), coming in a follow-up task.")
+        """Converts Markdown text to formatted PDF document using markdown-pdf."""
+        import re
+        try:
+            # Pre-process Markdown: replace ~~text~~ with <del>text</del> for strikethrough support
+            html_content = re.sub(r"~~(.*?)~~", r"<del>\1</del>", markdown_content)
+
+            from markdown_pdf import MarkdownPdf, Section
+            
+            # CSS Stylesheet for professional layout matching the app's aesthetics
+            css = """
+            body {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                line-height: 1.5;
+                color: #333333;
+            }
+            h1, h2, h3 {
+                color: #1a1a1a;
+                margin-top: 20px;
+                margin-bottom: 10px;
+            }
+            h1 { border-bottom: 1px solid #eaecef; padding-bottom: 5px; }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                margin-top: 15px;
+                margin-bottom: 15px;
+            }
+            th, td {
+                border: 1px solid #cccccc;
+                padding: 8px 12px;
+                text-align: left;
+            }
+            th {
+                background-color: #f6f8fa;
+                font-weight: bold;
+            }
+            tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            code {
+                background-color: #f0f0f0;
+                padding: 2px 6px;
+                font-family: 'Consolas', monospace;
+                font-size: 0.9em;
+                border-radius: 3px;
+            }
+            del {
+                text-decoration: line-through;
+                color: #6a737d;
+            }
+            a {
+                color: #0366d6;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+            """
+            
+            pdf = MarkdownPdf(toc_level=2)
+            pdf.add_section(Section(html_content), user_css=css)
+            
+            # Ensure output directory exists
+            out_dir = os.path.dirname(out_path)
+            if out_dir and not os.path.exists(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
+                
+            pdf.save(out_path)
+            return f"Exported successfully to {os.path.basename(out_path)}"
+        except Exception as e:
+            raise RuntimeError(f"PDF Export Error: Failed to generate PDF document. Detail: {str(e)}")
 
 ModuleRegistry.register(PDFModule())
