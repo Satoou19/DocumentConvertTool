@@ -124,6 +124,14 @@ STYLE = {
 
 # ── Configuration constants ───────────────────────────────────────────────────
 
+# Resolve standard OS AppData directory (e.g. Roaming AppData on Windows)
+appdata_dir = os.getenv('APPDATA')
+if not appdata_dir:
+    # Cross-platform fallback for macOS / Linux
+    appdata_dir = os.path.join(os.path.expanduser("~"), ".config")
+
+DRAFT_PATH = os.path.join(appdata_dir, "DocConvert", "draft_autosave.md")
+
 # Giới hạn kích cỡ hiển thị trong textbox editor (500KB = ~500,000 ký tự)
 EDITOR_DISPLAY_LIMIT = 500_000
 
@@ -649,6 +657,8 @@ class App(BaseClass): # type: ignore
         self.bind("<Control-F>", self._shortcut_find)
         self.bind("<Control-h>", self._shortcut_replace)
         self.bind("<Control-H>", self._shortcut_replace)
+        
+        self._init_autosave()
 
     # ── Internal Actions & Event Handlers ─────────────────────────────────────
 
@@ -712,6 +722,11 @@ class App(BaseClass): # type: ignore
         self.is_preview_blocked = False
         self.is_dirty = False
         self._update_counts()
+        if os.path.exists(DRAFT_PATH):
+            try:
+                os.remove(DRAFT_PATH)
+            except Exception:
+                pass
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
         self._set_status("Editor cleared", "primary")
         palette = PALETTES[self.current_palette_var.get()]
@@ -1842,3 +1857,34 @@ class App(BaseClass): # type: ignore
                         self.editor._textbox.mark_set("insert", start)
                 except Exception:
                     pass
+
+    def _init_autosave(self):
+        # Restore draft on startup if it exists and has content
+        if os.path.exists(DRAFT_PATH):
+            try:
+                with open(DRAFT_PATH, "r", encoding="utf-8") as f:
+                    draft_content = f.read()
+                if draft_content.strip():
+                    self.editor.configure(state="normal")
+                    self.editor.delete("1.0", "end")
+                    self.editor.insert("1.0", draft_content)
+                    self._update_counts()
+                    self._set_status("Restored autosaved draft", "green")
+            except Exception as e:
+                print(f"[DEBUG] Failed to restore draft on startup: {e}")
+                
+        # Start the periodic background autosave loop
+        self._periodic_autosave()
+
+    def _periodic_autosave(self):
+        if self.is_dirty and not self.is_processing:
+            try:
+                content = self.editor.get("1.0", "end-1c")
+                os.makedirs(os.path.dirname(DRAFT_PATH), exist_ok=True)
+                with open(DRAFT_PATH, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as e:
+                print(f"[DEBUG] Failed to autosave draft: {e}")
+        
+        # Schedule the next autosave check in 5000 milliseconds (5 seconds)
+        self.after(5000, self._periodic_autosave)
