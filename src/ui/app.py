@@ -306,9 +306,10 @@ class App(BaseClass): # type: ignore
         self.left_pane.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=0)
         self.left_pane.rowconfigure(0, weight=0) # Label
         self.left_pane.rowconfigure(1, weight=0) # Drag Drop Info
-        self.left_pane.rowconfigure(2, weight=0) # Search & Replace Panel (collapsible)
-        self.left_pane.rowconfigure(3, weight=1) # Textbox Editor
-        self.left_pane.rowconfigure(4, weight=0) # Footer stats
+        self.left_pane.rowconfigure(2, weight=0) # Toolbar
+        self.left_pane.rowconfigure(3, weight=0) # Search & Replace Panel (collapsible)
+        self.left_pane.rowconfigure(4, weight=1) # Textbox Editor
+        self.left_pane.rowconfigure(5, weight=0) # Footer stats
         self.left_pane.columnconfigure(0, weight=1)
 
         self.editor_title = ctk.CTkLabel(
@@ -357,6 +358,38 @@ class App(BaseClass): # type: ignore
                 w.dnd_bind("<<DragEnter>>", self._on_drag_enter) # type: ignore
                 w.dnd_bind("<<DragLeave>>", self._on_drag_leave) # type: ignore
 
+        # The Formatting Toolbar (Word / Excel style toolbar)
+        self.toolbar_frame = ctk.CTkFrame(self.left_pane, fg_color="transparent", border_width=0)
+        self.toolbar_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(5, 5))
+        
+        btn_configs = [
+            ("B", lambda: self._apply_format("**", "**"), "Bold"),
+            ("I", lambda: self._apply_format("*", "*"), "Italic"),
+            ("S", lambda: self._apply_format("~~", "~~"), "Strikethrough"),
+            ("U", lambda: self._apply_format("<u>", "</u>"), "Underline"),
+            ("Code", lambda: self._apply_format("`", "`"), "Inline Code"),
+            ("Link 🔗", self._apply_link, "Link"),
+            ("H1", lambda: self._apply_heading("#"), "H1"),
+            ("H2", lambda: self._apply_heading("##"), "H2"),
+            ("H3", lambda: self._apply_heading("###"), "H3"),
+            ("List ☰", lambda: self._apply_format("- ", ""), "Bullet List"),
+            ("List 🔢", lambda: self._apply_format("1. ", ""), "Numbered List"),
+            ("Table ⊞", self._insert_table, "Table"),
+        ]
+        
+        for idx, (text, command, tooltip) in enumerate(btn_configs):
+            btn = ctk.CTkButton(
+                self.toolbar_frame, text=text, width=45 if len(text) > 2 else 32, height=24,
+                font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+                fg_color=STYLE["btn_utility_fg"],
+                hover_color=STYLE["btn_utility_hover"],
+                border_color=STYLE["btn_utility_border"],
+                border_width=1,
+                text_color=STYLE["text_primary"],
+                command=command
+            )
+            btn.pack(side="left", padx=2)
+
         # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
             self.left_pane, 
@@ -368,8 +401,9 @@ class App(BaseClass): # type: ignore
             corner_radius=8,
             undo=True
         )
-        self.editor.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
+        self.editor.grid(row=4, column=0, sticky="nsew", padx=15, pady=8)
         self.editor.bind("<KeyRelease>", self._update_counts)
+        self.editor._textbox.bind("<KeyPress>", self._on_editor_key_press)
 
         # Register highlight tags for search
         self._update_highlight_colors()
@@ -384,7 +418,7 @@ class App(BaseClass): # type: ignore
 
         # Editor Footer (Stats & Actions)
         editor_footer = ctk.CTkFrame(self.left_pane, fg_color="transparent", border_width=0)
-        editor_footer.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
+        editor_footer.grid(row=5, column=0, sticky="ew", padx=15, pady=(5, 12))
         
         self.char_lbl = ctk.CTkLabel(
             editor_footer, text="Characters: 0", 
@@ -399,6 +433,18 @@ class App(BaseClass): # type: ignore
             text_color=STYLE["text_muted"]
         )
         self.word_lbl.pack(side="left", padx=5)
+
+        self.btn_md_guide = ctk.CTkButton(
+            editor_footer, text="MD Guide ❔", width=85, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+            command=self._show_md_guide
+        )
+        self.btn_md_guide.pack(side="left", padx=15)
 
         self.btn_clear = ctk.CTkButton(
             editor_footer, text="Clear All", width=70, height=24, 
@@ -537,7 +583,13 @@ class App(BaseClass): # type: ignore
             corner_radius=8
         )
         self.preview_box.grid(row=2, column=0, sticky="nsew", padx=15, pady=8)
-        self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
+        self._write_preview(
+            "SYSTEM READY\n\n"
+            "- Drag & drop your Markdown, Excel, Word or PDF file into the left pane.\n"
+            "- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.\n\n"
+            "💡 Supported Markdown formats: Headings (#), Bold (**), Italic (*), Strikethrough (~~), Underline (<u>), Inline Code (`), Links ([text](url)), Nested Lists, and Tables.\n\n"
+            "Click 'MD Guide ❔' under the input editor for exact syntax examples!"
+        )
 
         # Large Action Button & Status Info
         action_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", border_width=0)
@@ -1454,8 +1506,8 @@ class App(BaseClass): # type: ignore
         self.search_panel_visible = show
         
         if show:
-            # Grid into row 2 of left_pane
-            self.search_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=5)
+            # Grid into row 3 of left_pane
+            self.search_frame.grid(row=3, column=0, sticky="ew", padx=15, pady=5)
             self.search_entry.focus()
             self.search_entry.select_range(0, "end")
             self._perform_search()
@@ -1601,3 +1653,190 @@ class App(BaseClass): # type: ignore
         
         self.current_match_idx = -1
         self._perform_search()
+
+    def _show_md_guide(self):
+        import tkinter as tk
+        guide_win = tk.Toplevel(self)
+        guide_win.title("Markdown Syntax Guide")
+        guide_win.geometry("450x440")
+        guide_win.resizable(False, False)
+        
+        # Resolve background theme color
+        bg_color = self.workspace.cget("fg_color")
+        if isinstance(bg_color, tuple):
+            bg_color = bg_color[1] if ctk.get_appearance_mode() == "Dark" else bg_color[0]
+        guide_win.configure(bg=bg_color)
+        
+        # Make it transient & grab focus (modal behavior)
+        guide_win.transient(self)
+        guide_win.grab_set()
+        guide_win.focus_set()
+        
+        fg_color = "#ffffff" if ctk.get_appearance_mode() == "Dark" else "#1d1d1f"
+        
+        title_lbl = tk.Label(
+            guide_win, text="Supported Markdown Formatting",
+            font=("Segoe UI", 14, "bold"),
+            bg=bg_color,
+            fg=fg_color
+        )
+        title_lbl.pack(pady=(15, 10))
+        
+        text_bg = "#1d202b" if ctk.get_appearance_mode() == "Dark" else "#f3f4f6"
+        text_fg = "#f8f8f2" if ctk.get_appearance_mode() == "Dark" else "#1d1d1f"
+        
+        guide_txt = tk.Text(
+            guide_win, width=50, height=18,
+            font=("Consolas", 10),
+            bg=text_bg,
+            fg=text_fg,
+            bd=1,
+            relief="flat",
+            padx=10,
+            pady=10
+        )
+        guide_txt.pack(padx=20, pady=5)
+        
+        cheat_sheet = (
+            "Syntax Cheatsheet:\n"
+            "=========================================\n\n"
+            "1. Headings (Tiêu đề):\n"
+            "   # Heading 1\n"
+            "   ## Heading 2\n"
+            "   ### Heading 3\n\n"
+            "2. Bold (In đậm):\n"
+            "   **text** or __text__\n\n"
+            "3. Italic (In nghiêng):\n"
+            "   *text* or _text_\n\n"
+            "4. Strikethrough (Gạch ngang):\n"
+            "   ~~text~~\n\n"
+            "5. Underline (Gạch chân):\n"
+            "   <u>text</u>\n\n"
+            "6. Inline Code (Mã dòng):\n"
+            "   `code`\n\n"
+            "7. Hyperlink (Liên kết):\n"
+            "   [Link Text](https://url.com)\n\n"
+            "8. Lists (Danh sách):\n"
+            "   - Bullet Item 1\n"
+            "     - Nested Bullet Item (Indent 2 spaces)\n"
+            "   1. Numbered Item 1\n"
+            "     1. Nested Numbered (Indent 2 spaces)\n\n"
+            "9. Tables (Bảng dữ liệu):\n"
+            "   | Header 1 | Header 2 |\n"
+            "   | --- | --- |\n"
+            "   | **Bold Cell** | [Link](url) |\n"
+        )
+        guide_txt.insert("1.0", cheat_sheet)
+        guide_txt.configure(state="disabled")
+        
+        btn_close = tk.Button(
+            guide_win, text="Close", width=12, height=1,
+            font=("Segoe UI", 10, "bold"),
+            bg="#5d3fd3" if ctk.get_appearance_mode() == "Dark" else "#ebe4ff",
+            fg="#ffffff" if ctk.get_appearance_mode() == "Dark" else "#5d3fd3",
+            activebackground=bg_color,
+            bd=1,
+            relief="flat",
+            command=guide_win.destroy
+        )
+        btn_close.pack(pady=(10, 15))
+
+    def _apply_format(self, prefix, suffix):
+        import tkinter as tk
+        try:
+            start = self.editor._textbox.index("sel.first")
+            end = self.editor._textbox.index("sel.last")
+            selected_text = self.editor._textbox.get("sel.first", "sel.last")
+            new_text = f"{prefix}{selected_text}{suffix}"
+            self.editor._textbox.delete("sel.first", "sel.last")
+            self.editor._textbox.insert(start, new_text)
+            new_end = self.editor._textbox.index(f"{start} + {len(new_text)} chars")
+            self.editor._textbox.tag_add("sel", start, new_end)
+            self.editor.focus_set()
+            self._update_counts()
+        except tk.TclError:
+            # If no selection, insert placeholder at cursor and highlight the placeholder
+            cursor_pos = self.editor._textbox.index("insert")
+            self.editor._textbox.insert(cursor_pos, f"{prefix}text{suffix}")
+            text_start = self.editor._textbox.index(f"{cursor_pos} + {len(prefix)} chars")
+            text_end = self.editor._textbox.index(f"{text_start} + 4 chars")
+            self.editor._textbox.tag_add("sel", text_start, text_end)
+            # Move insertion cursor to the start of the 'text' placeholder so typing replaces it immediately!
+            self.editor._textbox.mark_set("insert", text_start)
+            self.editor.focus_set()
+            self._update_counts()
+
+    def _apply_heading(self, heading_mark):
+        import re
+        try:
+            cursor_pos = self.editor._textbox.index("insert")
+            line_num = cursor_pos.split(".")[0]
+            line_start = f"{line_num}.0"
+            line_end = f"{line_num}.end"
+            
+            line_content = self.editor._textbox.get(line_start, line_end)
+            cleaned_line = re.sub(r"^#{1,6}\s*", "", line_content)
+            new_line = f"{heading_mark} {cleaned_line}"
+            
+            self.editor._textbox.delete(line_start, line_end)
+            self.editor._textbox.insert(line_start, new_line)
+            
+            self.editor.focus_set()
+            self._update_counts()
+        except Exception:
+            pass
+
+    def _apply_link(self):
+        from tkinter import simpledialog
+        try:
+            start = self.editor._textbox.index("sel.first")
+            selected_text = self.editor._textbox.get("sel.first", "sel.last")
+            has_selection = True
+        except Exception:
+            selected_text = "Link Text"
+            start = self.editor._textbox.index("insert")
+            has_selection = False
+
+        url = simpledialog.askstring("Insert Link", "Enter URL:", parent=self)
+        if url:
+            new_text = f"[{selected_text}]({url})"
+            if has_selection:
+                try:
+                    self.editor._textbox.delete("sel.first", "sel.last")
+                except Exception:
+                    pass
+            self.editor._textbox.insert(start, new_text)
+            
+            if not has_selection:
+                # Highlight only the placeholder link text
+                text_start = self.editor._textbox.index(f"{start} + 1 chars")
+                text_end = self.editor._textbox.index(f"{text_start} + {len(selected_text)} chars")
+                self.editor._textbox.tag_add("sel", text_start, text_end)
+                self.editor._textbox.mark_set("insert", text_start)
+                
+            self.editor.focus_set()
+            self._update_counts()
+
+    def _insert_table(self):
+        cursor_pos = self.editor._textbox.index("insert")
+        table_template = (
+            "\n| Column 1 | Column 2 |\n"
+            "| --- | --- |\n"
+            "| Row 1 Cell 1 | Row 1 Cell 2 |\n"
+            "| Row 2 Cell 1 | Row 2 Cell 2 |\n"
+        )
+        self.editor._textbox.insert(cursor_pos, table_template)
+        self.editor.focus_set()
+        self._update_counts()
+
+    def _on_editor_key_press(self, event):
+        if event.char and len(event.char) == 1:
+            # Check if it is a printable character, Enter, or Tab
+            if ord(event.char) >= 32 or event.char in ('\r', '\n', '\t'):
+                try:
+                    if self.editor._textbox.tag_ranges("sel"):
+                        start = self.editor._textbox.index("sel.first")
+                        self.editor._textbox.delete("sel.first", "sel.last")
+                        self.editor._textbox.mark_set("insert", start)
+                except Exception:
+                    pass
