@@ -49,6 +49,10 @@ class CSVModule(BaseDocumentModule):
         
         # Save the first parsed table
         name, df = tables[0]
+        from src.core.converters import strip_markdown_styles
+        for col in df.columns:
+            df[col] = df[col].apply(lambda x: strip_markdown_styles(str(x)))
+        df.columns = [strip_markdown_styles(str(c)) for c in df.columns]
         df.to_csv(out_path, index=False, encoding="utf-8-sig")
         return f"Exported table successfully to CSV -> {os.path.basename(out_path)}"
 

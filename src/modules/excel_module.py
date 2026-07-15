@@ -18,23 +18,77 @@ class ExcelModule(BaseDocumentModule):
         return ["pandas", "openpyxl"]
 
     def load_to_markdown(self, file_path: str) -> str:
-        """Extracts Excel sheets into clean Markdown tables."""
-        xl = pd.ExcelFile(file_path)
+        """Extracts Excel sheets into clean Markdown tables, preserving bold, italic, strike, underline, and hyperlinks."""
+        import openpyxl
+        from src.core.converters import wrap_text_style
+        from openpyxl.cell.rich_text import CellRichText
+
+        wb = openpyxl.load_workbook(file_path, data_only=True, rich_text=True)
         parts = []
-        for sheet in xl.sheet_names:
-            df = xl.parse(sheet).fillna("")
-            parts.append(f"## {sheet}\n")
-            if not df.empty:
-                header = "| " + " | ".join(str(c) for c in df.columns) + " |"
-                sep    = "| " + " | ".join("---" for _ in df.columns) + " |"
-                parts.append(header)
-                parts.append(sep)
-                for _, row in df.iterrows():
-                    cells = [str(v).replace("\n", " ").replace("|", "\\|") for v in row]
-                    parts.append("| " + " | ".join(cells) + " |")
-            else:
-                parts.append("*(Empty Table)*")
+        for name in wb.sheetnames:
+            ws = wb[name]
+            parts.append(f"## {name}\n")
+            
+            rows = list(ws.iter_rows(values_only=False))
+            if not rows:
+                parts.append("*(Empty Table)*\n")
+                continue
+                
+            grid = []
+            for row in rows:
+                row_cells = []
+                for cell in row:
+                    val = cell.value
+                    val_str = ""
+                    
+                    if isinstance(val, CellRichText):
+                        formatted_parts = []
+                        for el in val:
+                            if isinstance(el, str):
+                                formatted_parts.append(el)
+                            else:
+                                font = el.font
+                                bold = font.b if font else False
+                                italic = font.i if font else False
+                                strike = font.strike if font else False
+                                underline = bool(font.u) if font and font.u else False
+                                code = font.rFont == "Consolas" if font and font.rFont else False
+                                formatted_parts.append(wrap_text_style(el.text, bold=bold, italic=italic, strike=strike, underline=underline, code=code))
+                        val_str = "".join(formatted_parts).strip()
+                    else:
+                        val_str = str(val).strip() if val is not None else ""
+                        if val_str and cell.has_style:
+                            font = cell.font
+                            bold = font.bold if font else False
+                            italic = font.italic if font else False
+                            strike = font.strike if font else False
+                            underline = bool(font.underline) if font and font.underline else False
+                            code = font.name == "Consolas" if font and font.name else False
+                            
+                            val_str = wrap_text_style(val_str, bold=bold, italic=italic, strike=strike, underline=underline, code=code)
+                        
+                    if val_str and cell.hyperlink and cell.hyperlink.target:
+                        val_str = f"[{val_str}]({cell.hyperlink.target})"
+                        
+                    val_str = val_str.replace("\n", " ").replace("|", "\\|")
+                    row_cells.append(val_str)
+                grid.append(row_cells)
+                
+            while grid and all(not c for c in grid[-1]):
+                grid.pop()
+                
+            if not grid:
+                parts.append("*(Empty Table)*\n")
+                continue
+                
+            header = "| " + " | ".join(grid[0]) + " |"
+            sep = "| " + " | ".join("---" for _ in grid[0]) + " |"
+            parts.append(header)
+            parts.append(sep)
+            for row in grid[1:]:
+                parts.append("| " + " | ".join(row) + " |")
             parts.append("")
+            
         return "\n".join(parts)
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
@@ -72,14 +126,70 @@ class ExcelModule(BaseDocumentModule):
                 thin = Side(border_style="thin", color="D9D9D9")
                 thin_border  = Border(left=thin, right=thin, top=thin, bottom=thin)
 
+                def format_excel_cell(cell, md_text: str):
+                    from src.core.converters import parse_inline
+                    from openpyxl.cell.rich_text import CellRichText, TextBlock
+                    from openpyxl.cell.text import InlineFont
+
+                    if not md_text:
+                        cell.value = ""
+                        return
+
+                    segments = parse_inline(md_text)
+                    if not segments:
+                        cell.value = ""
+                        return
+
+                    has_formatting = any(s.bold or s.italic or s.strike or s.underline or s.code or s.url for s in segments)
+                    if not has_formatting:
+                        cell.value = "".join(s.text for s in segments)
+                        return
+
+                    hyperlink_url = None
+                    for s in segments:
+                        if s.url:
+                            hyperlink_url = s.url
+                            break
+
+                    blocks = []
+                    for s in segments:
+                        if s.bold or s.italic or s.strike or s.underline or s.code:
+                            font = InlineFont(
+                                b=s.bold,
+                                i=s.italic,
+                                strike=s.strike,
+                                u="single" if s.underline else None,
+                                rFont="Consolas" if s.code else "Arial",
+                                sz=10 if s.code else 11,
+                                color="A52A2A" if s.code else None
+                            )
+                            blocks.append(TextBlock(font, s.text))
+                        elif s.url:
+                            font = InlineFont(
+                                u="single",
+                                color="0000FF",
+                                rFont="Arial",
+                                sz=11
+                            )
+                            blocks.append(TextBlock(font, s.text))
+                        else:
+                            blocks.append(s.text)
+
+                    cell.value = CellRichText(*blocks)
+                    if hyperlink_url:
+                        cell.hyperlink = hyperlink_url
+
                 for row_idx, row in enumerate(ws.iter_rows(), start=1):
                     for cell in row:
                         cell.border = thin_border
+                        val_str = str(cell.value or "").strip()
                         if row_idx == 1:
+                            format_excel_cell(cell, val_str)
                             cell.fill = header_fill
                             cell.font = header_font
                             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                         else:
+                            format_excel_cell(cell, val_str)
                             cell.font = body_font
                             cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
