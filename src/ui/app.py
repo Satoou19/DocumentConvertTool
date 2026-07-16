@@ -142,6 +142,7 @@ MODES = {
     "MD -> Word":   {"in_ext": ".md",   "out_ext": ".docx", "in_label": "File .md",   "out_label": "Save .docx"},
     "MD -> CSV":    {"in_ext": ".md",   "out_ext": ".csv",  "in_label": "File .md",   "out_label": "Save .csv"},
     "MD -> PDF":    {"in_ext": ".md",   "out_ext": ".pdf",  "in_label": "File .md",   "out_label": "Save .pdf"},
+    "MD -> HTML":   {"in_ext": ".md",   "out_ext": ".html", "in_label": "File .md",   "out_label": "Save .html"},
     "Excel -> MD":  {"in_ext": ".xlsx", "out_ext": ".md",   "in_label": "File .xlsx", "out_label": "Save .md"},
     "Word -> MD":   {"in_ext": ".docx", "out_ext": ".md",   "in_label": "File .docx", "out_label": "Save .md"},
     "CSV -> MD":    {"in_ext": ".csv",  "out_ext": ".md",   "in_label": "File .csv",  "out_label": "Save .md"},
@@ -162,6 +163,7 @@ OUT_FILETYPES = {
     ".md":   [("Markdown", "*.md")],
     ".csv":  [("CSV", "*.csv")],
     ".pdf":  [("PDF", "*.pdf")],
+    ".html": [("HTML Document", "*.html *.htm")],
 }
 
 BaseClass = TkinterDnD.Tk if HAS_DND else ctk.CTk
