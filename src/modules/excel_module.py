@@ -2,7 +2,6 @@ import os
 import pandas as pd
 from src.core.base_module import BaseDocumentModule
 from src.core.registry import ModuleRegistry
-from src.core.converters import parse_md_tables
 
 class ExcelModule(BaseDocumentModule):
     @property
@@ -108,117 +107,157 @@ class ExcelModule(BaseDocumentModule):
                 raise RuntimeError(f"Excel Ingestion Error: Failed to extract text layer from spreadsheet file. Detail: {str(inner_e)}")
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
-        """Converts Markdown tables to formatted Excel spreadsheet."""
+        """Converts Markdown line-by-line to a single Excel sheet, splitting tables to columns and keeping other text in Column A."""
+        import re
+        import openpyxl
+        from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.utils import get_column_letter
 
-        tables = parse_md_tables(markdown_content)
-        if not tables:
-            return (
-                "No tables found in the Markdown content.\n\n"
-                "To convert to Excel, please ensure your Markdown content has tables that follow the standard Markdown format, for example:\n\n"
-                "| Column 1 | Column 2 |\n"
-                "| --- | --- |\n"
-                "| Value 1 | Value 2 |\n\n"
-                "Make sure you include the separator row (the line with dashes like '| --- | --- |') below the header row."
-            )
+        # Nested helper to apply inline styling (bold, italic, links, etc.)
+        def format_excel_cell(cell, md_text: str, is_heading: bool = False):
+            from src.core.converters import parse_inline
+            from openpyxl.cell.rich_text import CellRichText, TextBlock
+            from openpyxl.cell.text import InlineFont
 
-        seen = {}
-        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-            for name, df in tables:
-                key = name
-                if key in seen:
-                    seen[key] += 1
-                    key = f"{name}_{seen[key]}"
+            if not md_text:
+                cell.value = ""
+                return
+
+            segments = parse_inline(md_text)
+            if not segments:
+                cell.value = ""
+                return
+
+            # Check if there is styling
+            has_formatting = any(s.bold or s.italic or s.strike or s.underline or s.code or s.url for s in segments) or is_heading
+            if not has_formatting:
+                cell.value = "".join(s.text for s in segments)
+                return
+
+            hyperlink_url = None
+            for s in segments:
+                if s.url:
+                    hyperlink_url = s.url
+                    break
+
+            blocks = []
+            for s in segments:
+                is_bold = s.bold or is_heading
+                sz = 13 if is_heading else (10 if s.code else 11)
+                
+                if is_bold or s.italic or s.strike or s.underline or s.code:
+                    font = InlineFont(
+                        b=is_bold,
+                        i=s.italic,
+                        strike=s.strike,
+                        u="single" if s.underline else None,
+                        rFont="Consolas" if s.code else "Arial",
+                        sz=sz,
+                        color="A52A2A" if s.code else None
+                    )
+                    blocks.append(TextBlock(font, s.text))
+                elif s.url:
+                    font = InlineFont(
+                        u="single",
+                        color="0000FF",
+                        rFont="Arial",
+                        sz=11
+                    )
+                    blocks.append(TextBlock(font, s.text))
                 else:
-                    seen[name] = 0
-                df.to_excel(writer, sheet_name=key, index=False)
+                    blocks.append(s.text)
 
-                ws = writer.sheets[key]
+            cell.value = CellRichText(*blocks)
+            if hyperlink_url:
+                cell.hyperlink = hyperlink_url
 
-                header_fill = PatternFill("solid", fgColor="4472C4")
-                header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
-                body_font = Font(name="Arial", size=11)
-                thin = Side(border_style="thin", color="D9D9D9")
-                thin_border  = Border(left=thin, right=thin, top=thin, bottom=thin)
+        wb = Workbook()
+        ws = wb.active
+        # Set a clean default sheet title based on the output filename
+        sheet_title = os.path.splitext(os.path.basename(out_path))[0][:31]
+        sheet_title = re.sub(r'[\\/?*\[\]:]', "_", sheet_title)
+        if not sheet_title:
+            sheet_title = "Sheet1"
+        ws.title = sheet_title
 
-                def format_excel_cell(cell, md_text: str):
-                    from src.core.converters import parse_inline
-                    from openpyxl.cell.rich_text import CellRichText, TextBlock
-                    from openpyxl.cell.text import InlineFont
+        header_fill = PatternFill("solid", fgColor="4472C4")
+        header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+        body_font = Font(name="Arial", size=11)
+        thin = Side(border_style="thin", color="D9D9D9")
+        thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-                    if not md_text:
-                        cell.value = ""
-                        return
+        row_idx = 1
+        in_table = False
 
-                    segments = parse_inline(md_text)
-                    if not segments:
-                        cell.value = ""
-                        return
+        lines = markdown_content.splitlines()
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                in_table = False
+                row_idx += 1
+                continue
 
-                    has_formatting = any(s.bold or s.italic or s.strike or s.underline or s.code or s.url for s in segments)
-                    if not has_formatting:
-                        cell.value = "".join(s.text for s in segments)
-                        return
+            # Skip table separator rows but ensure we are marked as in a table
+            if "|" in stripped and re.match(r"^[\|\s\-:]+$", stripped):
+                in_table = True
+                continue
 
-                    hyperlink_url = None
-                    for s in segments:
-                        if s.url:
-                            hyperlink_url = s.url
-                            break
+            # Check if it is a table row
+            if "|" in stripped:
+                inner_line = stripped
+                if inner_line.startswith("|"):
+                    inner_line = inner_line[1:]
+                if inner_line.endswith("|"):
+                    inner_line = inner_line[:-1]
 
-                    blocks = []
-                    for s in segments:
-                        if s.bold or s.italic or s.strike or s.underline or s.code:
-                            font = InlineFont(
-                                b=s.bold,
-                                i=s.italic,
-                                strike=s.strike,
-                                u="single" if s.underline else None,
-                                rFont="Consolas" if s.code else "Arial",
-                                sz=10 if s.code else 11,
-                                color="A52A2A" if s.code else None
-                            )
-                            blocks.append(TextBlock(font, s.text))
-                        elif s.url:
-                            font = InlineFont(
-                                u="single",
-                                color="0000FF",
-                                rFont="Arial",
-                                sz=11
-                            )
-                            blocks.append(TextBlock(font, s.text))
-                        else:
-                            blocks.append(s.text)
+                cells = [c.strip() for c in inner_line.split("|")]
+                
+                # Determine styling
+                is_header = not in_table
+                in_table = True  # We are in a table now
 
-                    cell.value = CellRichText(*blocks)
-                    if hyperlink_url:
-                        cell.hyperlink = hyperlink_url
+                for col_idx, cell_text in enumerate(cells, start=1):
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    format_excel_cell(cell, cell_text)
+                    cell.border = thin_border
+                    if is_header:
+                        cell.fill = header_fill
+                        cell.font = header_font
+                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    else:
+                        cell.font = body_font
+                        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                row_idx += 1
+            else:
+                # Regular text row
+                in_table = False
+                cell = ws.cell(row=row_idx, column=1)
 
-                for row_idx, row in enumerate(ws.iter_rows(), start=1):
-                    for cell in row:
-                        cell.border = thin_border
-                        val_str = str(cell.value or "").strip()
-                        if row_idx == 1:
-                            format_excel_cell(cell, val_str)
-                            cell.fill = header_fill
-                            cell.font = header_font
-                            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                        else:
-                            format_excel_cell(cell, val_str)
-                            cell.font = body_font
-                            cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                # Match heading style (# Heading, ## Heading, etc.)
+                match_heading = re.match(r"^(#{1,6})\s+(.*)", stripped)
+                if match_heading:
+                    heading_text = match_heading.group(2)
+                    heading_font = Font(name="Arial", size=13, bold=True)
+                    format_excel_cell(cell, heading_text, is_heading=True)
+                    cell.font = heading_font
+                else:
+                    format_excel_cell(cell, line.rstrip("\r\n"))
+                    cell.font = body_font
 
-                for col in ws.columns:
-                    max_len = 0
-                    for cell in col:
-                        if cell.value:
-                            max_len = max(max_len, len(str(cell.value)))
-                    ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 5, 50)
+                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                row_idx += 1
 
-                ws.freeze_panes = "A2"
-                ws.auto_filter.ref = ws.dimensions
+        # Auto-fit columns
+        for col in ws.columns:
+            max_len = 0
+            for cell in col:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            if max_len > 0:
+                ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 5, 50)
 
-        return f"Exported {len(tables)} sheet(s) successfully -> {os.path.basename(out_path)}"
+        wb.save(out_path)
+        return f"Exported 1 sheet successfully -> {os.path.basename(out_path)}"
 
 ModuleRegistry.register(ExcelModule())

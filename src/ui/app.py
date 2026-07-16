@@ -1072,22 +1072,7 @@ class App(BaseClass): # type: ignore
                 self._set_status("Conversion cancelled", "orange")
                 return
 
-        # Validate Markdown tables to prevent malformed data parsing
-        if mode in ("MD -> Excel", "MD -> CSV"):
-            if not has_md_tables(content):
-                from tkinter import messagebox
-                messagebox.showwarning(
-                    parent=self,
-                    title="No Tables Found",
-                    message="No tables were found in the Markdown content.\n\n"
-                            "To convert to Excel or CSV, your Markdown file must contain at least one table in standard Markdown format, for example:\n\n"
-                            "| Column 1 | Column 2 |\n"
-                            "| --- | --- |\n"
-                            "| Value 1 | Value 2 |\n\n"
-                            "Please ensure there is a separator row (like '|---|') below the header row."
-                )
-                self._set_status("No tables found in content", "red")
-                return
+
 
         warnings = get_md_table_warnings(content)
         if warnings:
