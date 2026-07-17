@@ -14,11 +14,22 @@ class HTMLModule(BaseDocumentModule):
 
     @property
     def required_dependencies(self) -> list[str]:
-        return ["markdown2"]
+        return ["markdown2", "markitdown"]
 
     def load_to_markdown(self, file_path: str) -> str:
-        """Loads physical file and extracts it to Markdown text."""
-        raise NotImplementedError("HTML to Markdown conversion is not supported yet.")
+        """Loads physical HTML file and extracts it to Markdown text using markitdown."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        try:
+            from markitdown import MarkItDown
+            md = MarkItDown()
+            result = md.convert(file_path)
+            if not result or not result.text_content:
+                return "*(Empty HTML)*"
+            return result.text_content
+        except Exception as e:
+            raise RuntimeError(f"HTML Ingestion Error: Failed to extract text from HTML. Detail: {str(e)}")
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
         """Converts Markdown text and saves it to a styled HTML document."""

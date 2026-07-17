@@ -147,6 +147,7 @@ MODES = {
     "Word -> MD":   {"in_ext": ".docx", "out_ext": ".md",   "in_label": "File .docx", "out_label": "Save .md"},
     "CSV -> MD":    {"in_ext": ".csv",  "out_ext": ".md",   "in_label": "File .csv",  "out_label": "Save .md"},
     "PDF -> MD":    {"in_ext": ".pdf",  "out_ext": ".md",   "in_label": "File .pdf",  "out_label": "Save .md"},
+    "HTML -> MD":   {"in_ext": ".html", "out_ext": ".md",   "in_label": "File .html", "out_label": "Save .md"},
 }
 
 IN_FILETYPES = {
@@ -155,6 +156,7 @@ IN_FILETYPES = {
     ".docx": [("Word", "*.docx"), ("All Files", "*.*")],
     ".csv":  [("CSV", "*.csv"), ("All Files", "*.*")],
     ".pdf":  [("PDF", "*.pdf"), ("All Files", "*.*")],
+    ".html": [("HTML Document", "*.html *.htm"), ("All Files", "*.*")],
 }
 
 OUT_FILETYPES = {
@@ -214,6 +216,7 @@ class App(BaseClass): # type: ignore
         self._overlay_visible = False
         self._badge_timer_id = None
         self._toast_timer_id = None
+        self._preview_timer = None
         
         self._block_update_dimensions = False
         
@@ -321,10 +324,10 @@ class App(BaseClass): # type: ignore
         self.separator.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
 
         # 2. Main Workspace Wrapper to support rounded borders
-        self.workspace_outer = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0, border_width=0)
+        self.workspace_outer = ctk.CTkFrame(self, fg_color=PALETTES["Violet Cyberpunk"]["bg_pane"], corner_radius=0, border_width=0)
         self.workspace_outer.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
         
-        self.workspace = ctk.CTkFrame(self.workspace_outer, fg_color="transparent", corner_radius=0, border_width=0)
+        self.workspace = ctk.CTkFrame(self.workspace_outer, fg_color=PALETTES["Violet Cyberpunk"]["bg_pane"], corner_radius=0, border_width=0)
         self.workspace.pack(fill="both", expand=True, padx=15, pady=(0, 15))
         self.workspace.columnconfigure(0, weight=6, uniform="workspace_split") # Left Pane gets more weight
         self.workspace.columnconfigure(1, weight=5, uniform="workspace_split") # Right Pane
@@ -365,7 +368,7 @@ class App(BaseClass): # type: ignore
         self.drop_text_lbl.pack(pady=5)
         
         self.drop_formats_lbl = ctk.CTkLabel(
-            self.drop_overlay_inner, text="Supports: DOCX | PDF | XLS | CSV | MD",
+            self.drop_overlay_inner, text="Supports: DOCX | PDF | XLS | CSV | MD | HTML",
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
             text_color=STYLE["text_muted"]
         )
@@ -462,7 +465,7 @@ class App(BaseClass): # type: ignore
             undo=True
         )
         self.editor.grid(row=4, column=0, sticky="nsew", padx=15, pady=8)
-        self.editor._textbox.bind("<KeyRelease>", self._update_counts)
+        self.editor._textbox.bind("<KeyRelease>", self._on_editor_changed)
         self.editor._textbox.bind("<KeyPress>", self._on_editor_key_press)
 
         # Register highlight tags for search
@@ -563,8 +566,9 @@ class App(BaseClass): # type: ignore
         self.right_pane.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=0)
         self.right_pane.rowconfigure(0, weight=0) # Title
         self.right_pane.rowconfigure(1, weight=0) # Config panel
-        self.right_pane.rowconfigure(2, weight=1) # Output preview / Logs textbox
-        self.right_pane.rowconfigure(3, weight=0) # Convert Button & Status
+        self.right_pane.rowconfigure(2, weight=0) # Tab Selector
+        self.right_pane.rowconfigure(3, weight=1) # Output preview / Logs or Document Preview Frame
+        self.right_pane.rowconfigure(4, weight=0) # Convert Button & Status
         self.right_pane.columnconfigure(0, weight=1)
 
         self.output_title = ctk.CTkLabel(
@@ -652,7 +656,34 @@ class App(BaseClass): # type: ignore
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
 
-        # Output Preview & Logs Workspace
+        # Segmented Tab Controller
+        self.tab_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", height=35)
+        self.tab_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(5, 0))
+        self.tab_frame.grid_propagate(False)
+
+        self.tab_var = ctk.StringVar(value="Document Preview")
+        self.tab_selector = ctk.CTkSegmentedButton(
+            self.tab_frame,
+            values=["Document Preview", "System Log"],
+            variable=self.tab_var,
+            command=self._on_tab_change,
+            height=28
+        )
+        self.tab_selector.pack(side="left", fill="x", expand=True)
+
+        # Document Preview Frame (Markdown visual rendering)
+        from src.ui.document_preview import DocumentPreviewFrame
+        self.preview_frame = DocumentPreviewFrame(
+            self.right_pane, 
+            fg_color=STYLE["btn_utility_fg"],
+            scrollbar_fg_color=STYLE["btn_utility_fg"],
+            border_width=1, 
+            border_color=STYLE["btn_utility_border"], 
+            corner_radius=8
+        )
+        self.preview_frame.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
+
+        # Output Logs & Text Workspace
         self.preview_box = ctk.CTkTextbox(
             self.right_pane, 
             fg_color=STYLE["btn_utility_fg"], 
@@ -662,7 +693,7 @@ class App(BaseClass): # type: ignore
             border_color=STYLE["btn_utility_border"], 
             corner_radius=8
         )
-        self.preview_box.grid(row=2, column=0, sticky="nsew", padx=15, pady=8)
+        # Note: self.preview_box is NOT gridded by default, managed by _on_tab_change
         self._write_preview(
             "SYSTEM READY\n\n"
             "- Drag & drop your Markdown, Excel, Word or PDF file into the left pane.\n"
@@ -673,7 +704,7 @@ class App(BaseClass): # type: ignore
 
         # Large Action Button & Status Info
         action_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", border_width=0)
-        action_frame.grid(row=3, column=0, sticky="ew", padx=15, pady=(5, 12))
+        action_frame.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
         action_frame.columnconfigure(0, weight=3)
         action_frame.columnconfigure(1, weight=2)
         action_frame.columnconfigure(2, weight=2)
@@ -797,9 +828,11 @@ class App(BaseClass): # type: ignore
             palette = PALETTES[self.current_palette_var.get()]
             self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="CONVERT & SAVE")
             self._set_status("Mode changed to: " + mode, "primary")
-            # If the editor has no text, reset to standard greeting
+            
+            self._update_markdown_preview()
+            
             if not self.editor.get("1.0", "end-1c").strip():
-                self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
+                self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, Word or PDF file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.\n\n💡 Supported Markdown formats: Headings (#), Bold (**), Italic (*), Strikethrough (~~), Underline (<u>), Inline Code (`), Links ([text](url)), Nested Lists, and Tables.\n\nClick 'MD Guide ❔' under the input editor for exact syntax examples!")
 
     def _clear_editor(self):
         if self.is_processing:
@@ -818,20 +851,43 @@ class App(BaseClass): # type: ignore
             except Exception:
                 pass
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
+        self._update_markdown_preview()
         self._set_status("Editor cleared", "primary")
         palette = PALETTES[self.current_palette_var.get()]
         self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color=palette["text_accent_secondary"])
 
-    def _update_counts(self, event=None):
-        # Dùng full_content nếu file lớn hoặc bị chặn preview, nếu không thì lấy từ editor
+    def _on_editor_changed(self, event=None):
+        self.is_dirty = True
+        if self.search_panel_visible:
+            self._perform_search(keep_current_index=True)
+        self._update_counts()
+        self._schedule_preview_update()
+
+    def _schedule_preview_update(self):
+        if self._preview_timer is not None:
+            self.after_cancel(self._preview_timer)
+        self._preview_timer = self.after(300, self._update_markdown_preview)
+
+    def _update_markdown_preview(self):
+        self._preview_timer = None
+        if self.tab_var.get() == "Document Preview":
+            is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
+            content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
+            self.preview_frame.update_preview(content)
+
+    def _on_tab_change(self, selected_tab: str):
+        if selected_tab == "Document Preview":
+            self.preview_box.grid_forget()
+            self.preview_frame.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
+            self._update_markdown_preview()
+        else:
+            self.preview_frame.grid_forget()
+            self.preview_box.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
+
+    def _update_counts(self):
         is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
         content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
         
-        if event is not None:
-            self.is_dirty = True
-            if self.search_panel_visible:
-                self._perform_search(keep_current_index=True)
-            
         chars = len(content)
         words = len(content.split())
         self.char_lbl.configure(text=f"Characters: {chars}")
@@ -956,12 +1012,13 @@ class App(BaseClass): # type: ignore
             return
         # We allow loading any supported document type to auto-detect
         path = filedialog.askopenfilename(parent=self, filetypes=[
-            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv *.pdf"),
+            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv *.pdf *.html *.htm"),
             ("Markdown (*.md)", "*.md"),
             ("Excel (*.xlsx, *.xls)", "*.xlsx *.xls"),
             ("Word (*.docx)", "*.docx"),
             ("CSV (*.csv)", "*.csv"),
             ("PDF (*.pdf)", "*.pdf"),
+            ("HTML Document (*.html, *.htm)", "*.html *.htm"),
             ("All Files", "*.*")
         ])
         if path:
@@ -1114,6 +1171,7 @@ class App(BaseClass): # type: ignore
                     
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
+                    self._update_markdown_preview()
                     self._toggle_ui_state(True)
  
                 self.after(0, update_ui)
@@ -1592,6 +1650,15 @@ class App(BaseClass): # type: ignore
         
         # 8. Update search highlight configurations manually
         self._update_highlight_colors()
+
+        # 9. Update preview frame theme and tab selector styling
+        if hasattr(self, "preview_frame"):
+            self.preview_frame.set_theme(palette, STYLE)
+        if hasattr(self, "tab_selector"):
+            self.tab_selector.configure(
+                selected_color=palette["text_accent_primary"],
+                selected_hover_color=palette["btn_convert_hover"]
+            )
 
     def _update_highlight_colors(self):
         appearance_mode = ctk.get_appearance_mode().lower() # "light" or "dark"
