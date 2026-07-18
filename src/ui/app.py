@@ -124,6 +124,14 @@ STYLE = {
 
 # ── Configuration constants ───────────────────────────────────────────────────
 
+# Resolve standard OS AppData directory (e.g. Roaming AppData on Windows)
+appdata_dir = os.getenv('APPDATA')
+if not appdata_dir:
+    # Cross-platform fallback for macOS / Linux
+    appdata_dir = os.path.join(os.path.expanduser("~"), ".config")
+
+DRAFT_PATH = os.path.join(appdata_dir, "DocConvert", "draft_autosave.md")
+
 # Giới hạn kích cỡ hiển thị trong textbox editor (500KB = ~500,000 ký tự)
 EDITOR_DISPLAY_LIMIT = 500_000
 
@@ -133,10 +141,13 @@ MODES = {
     "MD -> Excel":  {"in_ext": ".md",   "out_ext": ".xlsx", "in_label": "File .md",   "out_label": "Save .xlsx"},
     "MD -> Word":   {"in_ext": ".md",   "out_ext": ".docx", "in_label": "File .md",   "out_label": "Save .docx"},
     "MD -> CSV":    {"in_ext": ".md",   "out_ext": ".csv",  "in_label": "File .md",   "out_label": "Save .csv"},
+    "MD -> PDF":    {"in_ext": ".md",   "out_ext": ".pdf",  "in_label": "File .md",   "out_label": "Save .pdf"},
+    "MD -> HTML":   {"in_ext": ".md",   "out_ext": ".html", "in_label": "File .md",   "out_label": "Save .html"},
     "Excel -> MD":  {"in_ext": ".xlsx", "out_ext": ".md",   "in_label": "File .xlsx", "out_label": "Save .md"},
     "Word -> MD":   {"in_ext": ".docx", "out_ext": ".md",   "in_label": "File .docx", "out_label": "Save .md"},
     "CSV -> MD":    {"in_ext": ".csv",  "out_ext": ".md",   "in_label": "File .csv",  "out_label": "Save .md"},
     "PDF -> MD":    {"in_ext": ".pdf",  "out_ext": ".md",   "in_label": "File .pdf",  "out_label": "Save .md"},
+    "HTML -> MD":   {"in_ext": ".html", "out_ext": ".md",   "in_label": "File .html", "out_label": "Save .md"},
 }
 
 IN_FILETYPES = {
@@ -145,6 +156,7 @@ IN_FILETYPES = {
     ".docx": [("Word", "*.docx"), ("All Files", "*.*")],
     ".csv":  [("CSV", "*.csv"), ("All Files", "*.*")],
     ".pdf":  [("PDF", "*.pdf"), ("All Files", "*.*")],
+    ".html": [("HTML Document", "*.html *.htm"), ("All Files", "*.*")],
 }
 
 OUT_FILETYPES = {
@@ -152,9 +164,22 @@ OUT_FILETYPES = {
     ".docx": [("Word",  "*.docx")],
     ".md":   [("Markdown", "*.md")],
     ".csv":  [("CSV", "*.csv")],
+    ".pdf":  [("PDF", "*.pdf")],
+    ".html": [("HTML Document", "*.html *.htm")],
 }
 
 BaseClass = TkinterDnD.Tk if HAS_DND else ctk.CTk
+
+
+class OutputFileState:
+    def __init__(self, in_path: str, out_path: str, duration_sec: float):
+        self.in_path = in_path
+        self.out_path = out_path
+        self.in_filename = os.path.basename(in_path)
+        self.out_filename = os.path.basename(out_path)
+        self.out_dir = os.path.dirname(out_path)
+        self.size_bytes = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+        self.duration_sec = duration_sec
 
 
 class App(BaseClass): # type: ignore
@@ -187,6 +212,13 @@ class App(BaseClass): # type: ignore
         self.is_preview_blocked = False
         self.is_dirty = False
         self.is_processing = False
+        self.output_state = None
+        self._overlay_visible = False
+        self._badge_timer_id = None
+        self._toast_timer_id = None
+        self._preview_timer = None
+        
+        self._block_update_dimensions = False
         
         # Theme variables
         self.appearance_mode_var = ctk.StringVar(value="Dark")
@@ -208,6 +240,12 @@ class App(BaseClass): # type: ignore
         self._on_mode_change()
         
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def block_update_dimensions_event(self):
+        self._block_update_dimensions = True
+
+    def unblock_update_dimensions_event(self):
+        self._block_update_dimensions = False
 
     def _build_ui(self):
         # Grid Configuration for main workspace
@@ -286,10 +324,10 @@ class App(BaseClass): # type: ignore
         self.separator.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
 
         # 2. Main Workspace Wrapper to support rounded borders
-        self.workspace_outer = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0, border_width=0)
+        self.workspace_outer = ctk.CTkFrame(self, fg_color=PALETTES["Violet Cyberpunk"]["bg_pane"], corner_radius=0, border_width=0)
         self.workspace_outer.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
         
-        self.workspace = ctk.CTkFrame(self.workspace_outer, fg_color="transparent", corner_radius=0, border_width=0)
+        self.workspace = ctk.CTkFrame(self.workspace_outer, fg_color=PALETTES["Violet Cyberpunk"]["bg_pane"], corner_radius=0, border_width=0)
         self.workspace.pack(fill="both", expand=True, padx=15, pady=(0, 15))
         self.workspace.columnconfigure(0, weight=6, uniform="workspace_split") # Left Pane gets more weight
         self.workspace.columnconfigure(1, weight=5, uniform="workspace_split") # Right Pane
@@ -304,11 +342,43 @@ class App(BaseClass): # type: ignore
             border_color=STYLE["btn_utility_border"]
         )
         self.left_pane.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=0)
+
+        # Drop overlay frame (visual-only, sits on top of editor & toolbar when file dragged over left pane)
+        self.drop_overlay = ctk.CTkFrame(
+            self.left_pane,
+            fg_color=("#ebe4ff", "#130f24"),
+            border_width=2,
+            corner_radius=12
+        )
+        # Sits in the center of the overlay
+        self.drop_overlay_inner = ctk.CTkFrame(self.drop_overlay, fg_color="transparent")
+        self.drop_overlay_inner.place(relx=0.5, rely=0.5, anchor="center")
+        
+        self.drop_icon_lbl = ctk.CTkLabel(
+            self.drop_overlay_inner, text="📂",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=36)
+        )
+        self.drop_icon_lbl.pack(pady=10)
+        
+        self.drop_text_lbl = ctk.CTkLabel(
+            self.drop_overlay_inner, text="Drop your document here",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=16, weight="bold"),
+            text_color=STYLE["text_primary"]
+        )
+        self.drop_text_lbl.pack(pady=5)
+        
+        self.drop_formats_lbl = ctk.CTkLabel(
+            self.drop_overlay_inner, text="Supports: DOCX | PDF | XLS | CSV | MD | HTML",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            text_color=STYLE["text_muted"]
+        )
+        self.drop_formats_lbl.pack(pady=5)
         self.left_pane.rowconfigure(0, weight=0) # Label
         self.left_pane.rowconfigure(1, weight=0) # Drag Drop Info
-        self.left_pane.rowconfigure(2, weight=0) # Search & Replace Panel (collapsible)
-        self.left_pane.rowconfigure(3, weight=1) # Textbox Editor
-        self.left_pane.rowconfigure(4, weight=0) # Footer stats
+        self.left_pane.rowconfigure(2, weight=0) # Toolbar
+        self.left_pane.rowconfigure(3, weight=0) # Search & Replace Panel (collapsible)
+        self.left_pane.rowconfigure(4, weight=1) # Textbox Editor
+        self.left_pane.rowconfigure(5, weight=0) # Footer stats
         self.left_pane.columnconfigure(0, weight=1)
 
         self.editor_title = ctk.CTkLabel(
@@ -349,13 +419,39 @@ class App(BaseClass): # type: ignore
         )
         self.drop_lbl.place(relx=0.0, rely=0.5, anchor="w", x=15)
 
-        # Register Drag & Drop with active drag hover animations
-        if HAS_DND:
-            for w in (self.load_bar, self.drop_lbl):
-                w.drop_target_register(DND_FILES) # type: ignore
-                w.dnd_bind("<<Drop>>", self._on_drop) # type: ignore
-                w.dnd_bind("<<DragEnter>>", self._on_drag_enter) # type: ignore
-                w.dnd_bind("<<DragLeave>>", self._on_drag_leave) # type: ignore
+
+
+        # The Formatting Toolbar (Word / Excel style toolbar)
+        self.toolbar_frame = ctk.CTkFrame(self.left_pane, fg_color="transparent", border_width=0)
+        self.toolbar_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(5, 5))
+        
+        btn_configs = [
+            ("B", lambda: self._apply_format("**", "**"), "Bold"),
+            ("I", lambda: self._apply_format("*", "*"), "Italic"),
+            ("S", lambda: self._apply_format("~~", "~~"), "Strikethrough"),
+            ("U", lambda: self._apply_format("<u>", "</u>"), "Underline"),
+            ("Code", lambda: self._apply_format("`", "`"), "Inline Code"),
+            ("Link 🔗", self._apply_link, "Link"),
+            ("H1", lambda: self._apply_heading("#"), "H1"),
+            ("H2", lambda: self._apply_heading("##"), "H2"),
+            ("H3", lambda: self._apply_heading("###"), "H3"),
+            ("List ☰", lambda: self._apply_format("- ", ""), "Bullet List"),
+            ("List 🔢", lambda: self._apply_format("1. ", ""), "Numbered List"),
+            ("Table ⊞", self._insert_table, "Table"),
+        ]
+        
+        for idx, (text, command, tooltip) in enumerate(btn_configs):
+            btn = ctk.CTkButton(
+                self.toolbar_frame, text=text, width=45 if len(text) > 2 else 32, height=24,
+                font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+                fg_color=STYLE["btn_utility_fg"],
+                hover_color=STYLE["btn_utility_hover"],
+                border_color=STYLE["btn_utility_border"],
+                border_width=1,
+                text_color=STYLE["text_primary"],
+                command=command
+            )
+            btn.pack(side="left", padx=2)
 
         # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
@@ -368,23 +464,24 @@ class App(BaseClass): # type: ignore
             corner_radius=8,
             undo=True
         )
-        self.editor.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
-        self.editor.bind("<KeyRelease>", self._update_counts)
+        self.editor.grid(row=4, column=0, sticky="nsew", padx=15, pady=8)
+        self.editor._textbox.bind("<KeyRelease>", self._on_editor_changed)
+        self.editor._textbox.bind("<KeyPress>", self._on_editor_key_press)
 
         # Register highlight tags for search
         self._update_highlight_colors()
 
         # Bind custom Undo/Redo events to catch exceptions and prevent duplicate actions
-        self.editor.bind("<Control-z>", self._undo)
-        self.editor.bind("<Control-Z>", self._undo)
-        self.editor.bind("<Control-y>", self._redo)
-        self.editor.bind("<Control-Y>", self._redo)
-        self.editor.bind("<Control-Shift-z>", self._redo)
-        self.editor.bind("<Control-Shift-Z>", self._redo)
+        self.editor._textbox.bind("<Control-z>", self._undo)
+        self.editor._textbox.bind("<Control-Z>", self._undo)
+        self.editor._textbox.bind("<Control-y>", self._redo)
+        self.editor._textbox.bind("<Control-Y>", self._redo)
+        self.editor._textbox.bind("<Control-Shift-z>", self._redo)
+        self.editor._textbox.bind("<Control-Shift-Z>", self._redo)
 
         # Editor Footer (Stats & Actions)
         editor_footer = ctk.CTkFrame(self.left_pane, fg_color="transparent", border_width=0)
-        editor_footer.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
+        editor_footer.grid(row=5, column=0, sticky="ew", padx=15, pady=(5, 12))
         
         self.char_lbl = ctk.CTkLabel(
             editor_footer, text="Characters: 0", 
@@ -399,6 +496,18 @@ class App(BaseClass): # type: ignore
             text_color=STYLE["text_muted"]
         )
         self.word_lbl.pack(side="left", padx=5)
+
+        self.btn_md_guide = ctk.CTkButton(
+            editor_footer, text="MD Guide ❔", width=85, height=24, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+            command=self._show_md_guide
+        )
+        self.btn_md_guide.pack(side="left", padx=15)
 
         self.btn_clear = ctk.CTkButton(
             editor_footer, text="Clear All", width=70, height=24, 
@@ -457,8 +566,9 @@ class App(BaseClass): # type: ignore
         self.right_pane.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=0)
         self.right_pane.rowconfigure(0, weight=0) # Title
         self.right_pane.rowconfigure(1, weight=0) # Config panel
-        self.right_pane.rowconfigure(2, weight=1) # Output preview / Logs textbox
-        self.right_pane.rowconfigure(3, weight=0) # Convert Button & Status
+        self.right_pane.rowconfigure(2, weight=0) # Tab Selector
+        self.right_pane.rowconfigure(3, weight=1) # Output preview / Logs or Document Preview Frame
+        self.right_pane.rowconfigure(4, weight=0) # Convert Button & Status
         self.right_pane.columnconfigure(0, weight=1)
 
         self.output_title = ctk.CTkLabel(
@@ -498,6 +608,13 @@ class App(BaseClass): # type: ignore
         )
         self.mode_menu.pack(side="left", fill="x", expand=True, padx=5)
 
+        self.badge_lbl = ctk.CTkLabel(
+            row_mode, text="",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+            text_color=STYLE["status_green"],
+            fg_color="transparent"
+        )
+
         # Path row
         row_out = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
         row_out.pack(fill="x", padx=12, pady=(5, 10))
@@ -520,13 +637,53 @@ class App(BaseClass): # type: ignore
         )
         self.btn_browse_out.pack(side="right", padx=2)
 
+        self.btn_copy_path = ctk.CTkButton(
+            row_out, text="Copy Path", width=75, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["status_gray"],
+            state="disabled",
+            command=self._copy_output_path
+        )
+        self.btn_copy_path.pack(side="right", padx=2)
+
         self.entry_out = ctk.CTkEntry(
             row_out, textvariable=self.out_path, placeholder_text="Select save location...",
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12)
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
 
-        # Output Preview & Logs Workspace
+        # Segmented Tab Controller
+        self.tab_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", height=35)
+        self.tab_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(5, 0))
+        self.tab_frame.grid_propagate(False)
+
+        self.tab_var = ctk.StringVar(value="Document Preview")
+        self.tab_selector = ctk.CTkSegmentedButton(
+            self.tab_frame,
+            values=["Document Preview", "System Log"],
+            variable=self.tab_var,
+            command=self._on_tab_change,
+            height=28
+        )
+        self.tab_selector.pack(side="left", fill="x", expand=True)
+
+        # Document Preview Frame (Markdown visual rendering)
+        from src.ui.document_preview import DocumentPreviewFrame
+        self.preview_frame = DocumentPreviewFrame(
+            self.right_pane, 
+            fg_color=STYLE["btn_utility_fg"],
+            scrollbar_fg_color=STYLE["btn_utility_fg"],
+            border_width=1, 
+            border_color=STYLE["btn_utility_border"], 
+            corner_radius=8
+        )
+        self.preview_frame.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
+
+        # Output Logs & Text Workspace
         self.preview_box = ctk.CTkTextbox(
             self.right_pane, 
             fg_color=STYLE["btn_utility_fg"], 
@@ -536,14 +693,21 @@ class App(BaseClass): # type: ignore
             border_color=STYLE["btn_utility_border"], 
             corner_radius=8
         )
-        self.preview_box.grid(row=2, column=0, sticky="nsew", padx=15, pady=8)
-        self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
+        # Note: self.preview_box is NOT gridded by default, managed by _on_tab_change
+        self._write_preview(
+            "SYSTEM READY\n\n"
+            "- Drag & drop your Markdown, Excel, Word or PDF file into the left pane.\n"
+            "- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.\n\n"
+            "💡 Supported Markdown formats: Headings (#), Bold (**), Italic (*), Strikethrough (~~), Underline (<u>), Inline Code (`), Links ([text](url)), Nested Lists, and Tables.\n\n"
+            "Click 'MD Guide ❔' under the input editor for exact syntax examples!"
+        )
 
         # Large Action Button & Status Info
         action_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", border_width=0)
-        action_frame.grid(row=3, column=0, sticky="ew", padx=15, pady=(5, 12))
+        action_frame.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
         action_frame.columnconfigure(0, weight=3)
         action_frame.columnconfigure(1, weight=2)
+        action_frame.columnconfigure(2, weight=2)
 
         self.btn_convert = ctk.CTkButton(
             action_frame, text="CONVERT & SAVE", height=48,
@@ -553,10 +717,10 @@ class App(BaseClass): # type: ignore
             text_color=STYLE["text_primary"],
             command=self._run_conversion
         )
-        self.btn_convert.grid(row=0, column=0, sticky="ew", padx=(0, 5), pady=(0, 5))
+        self.btn_convert.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=(0, 5))
 
         self.btn_open_file = ctk.CTkButton(
-            action_frame, text="OPEN CREATED FILE", height=48,
+            action_frame, text="OPEN FILE", height=48,
             font=ctk.CTkFont(family=STYLE["font_family_title"], size=13, weight="bold"),
             fg_color=STYLE["btn_utility_fg"], 
             hover_color=STYLE["btn_utility_hover"], 
@@ -564,7 +728,18 @@ class App(BaseClass): # type: ignore
             state="disabled",
             command=self._open_generated_file
         )
-        self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(5, 0), pady=(0, 5))
+        self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(4, 4), pady=(0, 5))
+
+        self.btn_open_folder = ctk.CTkButton(
+            action_frame, text="SHOW IN FOLDER", height=48,
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=13, weight="bold"),
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"], 
+            text_color=STYLE["status_gray"],
+            state="disabled",
+            command=self._open_containing_folder
+        )
+        self.btn_open_folder.grid(row=0, column=2, sticky="ew", padx=(4, 0), pady=(0, 5))
 
         self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", width=10, height=8, progress_color=STYLE["status_green"])
         # Kept hidden initially until conversion begins
@@ -574,7 +749,7 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, slant="italic"), 
             text_color=STYLE["status_gray"]
         )
-        self.status_lbl.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        self.status_lbl.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
         # Build search and replace panel
         self._build_search_panel(self.left_pane)
@@ -585,16 +760,26 @@ class App(BaseClass): # type: ignore
         self._update_titlebar_theme()
         
         # Bind keyboard shortcuts on the editor widget
-        self.editor.bind("<Control-f>", self._shortcut_find)
-        self.editor.bind("<Control-F>", self._shortcut_find)
-        self.editor.bind("<Control-h>", self._shortcut_replace)
-        self.editor.bind("<Control-H>", self._shortcut_replace)
+        self.editor._textbox.bind("<Control-f>", self._shortcut_find)
+        self.editor._textbox.bind("<Control-F>", self._shortcut_find)
+        self.editor._textbox.bind("<Control-h>", self._shortcut_replace)
+        self.editor._textbox.bind("<Control-H>", self._shortcut_replace)
         
         # Bind keyboard shortcuts globally on the main app window
         self.bind("<Control-f>", self._shortcut_find)
         self.bind("<Control-F>", self._shortcut_find)
         self.bind("<Control-h>", self._shortcut_replace)
         self.bind("<Control-H>", self._shortcut_replace)
+        
+        # Register Drag & Drop with active drag hover animations
+        if HAS_DND:
+            for w in (self.load_bar, self.drop_lbl, self.left_pane, self.editor, self.drop_overlay):
+                w.drop_target_register(DND_FILES) # type: ignore
+                w.dnd_bind("<<Drop>>", self._on_drop) # type: ignore
+                w.dnd_bind("<<DragEnter>>", self._on_drag_enter) # type: ignore
+                w.dnd_bind("<<DragLeave>>", self._on_drag_leave) # type: ignore
+
+        self._init_autosave()
 
     # ── Internal Actions & Event Handlers ─────────────────────────────────────
 
@@ -643,9 +828,11 @@ class App(BaseClass): # type: ignore
             palette = PALETTES[self.current_palette_var.get()]
             self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="CONVERT & SAVE")
             self._set_status("Mode changed to: " + mode, "primary")
-            # If the editor has no text, reset to standard greeting
+            
+            self._update_markdown_preview()
+            
             if not self.editor.get("1.0", "end-1c").strip():
-                self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, or Word file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.")
+                self._write_preview("SYSTEM READY\n\n- Drag & drop your Markdown, Excel, Word or PDF file into the left pane.\n- The smart extractor will automatically parse your file into Markdown for you to preview, edit, or delete any characters before exporting to a new format.\n\n💡 Supported Markdown formats: Headings (#), Bold (**), Italic (*), Strikethrough (~~), Underline (<u>), Inline Code (`), Links ([text](url)), Nested Lists, and Tables.\n\nClick 'MD Guide ❔' under the input editor for exact syntax examples!")
 
     def _clear_editor(self):
         if self.is_processing:
@@ -658,21 +845,49 @@ class App(BaseClass): # type: ignore
         self.is_preview_blocked = False
         self.is_dirty = False
         self._update_counts()
+        if os.path.exists(DRAFT_PATH):
+            try:
+                os.remove(DRAFT_PATH)
+            except Exception:
+                pass
         self._write_preview("Editor is empty. You can write your own Markdown text here!")
+        self._update_markdown_preview()
         self._set_status("Editor cleared", "primary")
         palette = PALETTES[self.current_palette_var.get()]
         self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color=palette["text_accent_secondary"])
 
-    def _update_counts(self, event=None):
-        # Dùng full_content nếu file lớn hoặc bị chặn preview, nếu không thì lấy từ editor
+    def _on_editor_changed(self, event=None):
+        self.is_dirty = True
+        if self.search_panel_visible:
+            self._perform_search(keep_current_index=True)
+        self._update_counts()
+        self._schedule_preview_update()
+
+    def _schedule_preview_update(self):
+        if self._preview_timer is not None:
+            self.after_cancel(self._preview_timer)
+        self._preview_timer = self.after(300, self._update_markdown_preview)
+
+    def _update_markdown_preview(self):
+        self._preview_timer = None
+        if self.tab_var.get() == "Document Preview":
+            is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
+            content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
+            self.preview_frame.update_preview(content)
+
+    def _on_tab_change(self, selected_tab: str):
+        if selected_tab == "Document Preview":
+            self.preview_box.grid_forget()
+            self.preview_frame.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
+            self._update_markdown_preview()
+        else:
+            self.preview_frame.grid_forget()
+            self.preview_box.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
+
+    def _update_counts(self):
         is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
         content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
         
-        if event is not None:
-            self.is_dirty = True
-            if self.search_panel_visible:
-                self._perform_search(keep_current_index=True)
-            
         chars = len(content)
         words = len(content.split())
         self.char_lbl.configure(text=f"Characters: {chars}")
@@ -723,6 +938,28 @@ class App(BaseClass): # type: ignore
         self.entry_out.configure(state=state)
         self.btn_browse_out.configure(state=state)
         
+        # Configure output action buttons
+        if not enabled:
+            self.btn_open_file.configure(state="disabled", fg_color=STYLE["btn_utility_fg"], text_color=STYLE["status_gray"])
+            self.btn_open_folder.configure(state="disabled", fg_color=STYLE["btn_utility_fg"], text_color=STYLE["status_gray"])
+            self.btn_copy_path.configure(state="disabled", fg_color=STYLE["btn_utility_fg"], text_color=STYLE["status_gray"])
+        else:
+            if self.output_state is not None:
+                palette_active = PALETTES[self.current_palette_var.get()]
+                self.btn_open_file.configure(
+                    state="normal", fg_color=palette_active["btn_open_fg"], hover_color=palette_active["btn_open_hover"], text_color=("#ffffff", "#ffffff")
+                )
+                self.btn_open_folder.configure(
+                    state="normal", fg_color=palette_active["btn_open_fg"], hover_color=palette_active["btn_open_hover"], text_color=("#ffffff", "#ffffff")
+                )
+                self.btn_copy_path.configure(
+                    state="normal", fg_color=palette_active["btn_open_fg"], hover_color=palette_active["btn_open_hover"], text_color=("#ffffff", "#ffffff")
+                )
+            else:
+                self.btn_open_file.configure(state="disabled", fg_color=STYLE["btn_utility_fg"], text_color=STYLE["status_gray"])
+                self.btn_open_folder.configure(state="disabled", fg_color=STYLE["btn_utility_fg"], text_color=STYLE["status_gray"])
+                self.btn_copy_path.configure(state="disabled", fg_color=STYLE["btn_utility_fg"], text_color=STYLE["status_gray"])
+
         if hasattr(self, "search_entry"):
             self.search_entry.configure(state=state)
             self.replace_entry.configure(state=state)
@@ -775,12 +1012,13 @@ class App(BaseClass): # type: ignore
             return
         # We allow loading any supported document type to auto-detect
         path = filedialog.askopenfilename(parent=self, filetypes=[
-            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv *.pdf"),
+            ("Supported Documents", "*.md *.xlsx *.xls *.docx *.csv *.pdf *.html *.htm"),
             ("Markdown (*.md)", "*.md"),
             ("Excel (*.xlsx, *.xls)", "*.xlsx *.xls"),
             ("Word (*.docx)", "*.docx"),
             ("CSV (*.csv)", "*.csv"),
             ("PDF (*.pdf)", "*.pdf"),
+            ("HTML Document (*.html, *.htm)", "*.html *.htm"),
             ("All Files", "*.*")
         ])
         if path:
@@ -876,6 +1114,7 @@ class App(BaseClass): # type: ignore
                     if detected_mode:
                         self.mode_var.set(detected_mode)
                         self._on_mode_change()
+                        self._show_auto_detect_badge(detected_mode, path)
                     
                     # Giới hạn hiển thị nếu content quá lớn hoặc bị chặn preview
                     if self.is_preview_blocked:
@@ -892,7 +1131,7 @@ class App(BaseClass): # type: ignore
                     self.editor.insert("1.0", display_content)
                     self.editor.edit_reset()  # Reset undo stack after loading new document content
                     
-                    self.is_dirty = False
+                    self.is_dirty = True
                     self._update_counts()
                     
                     preview_msg = f"LOADED DOCUMENT OVERVIEW:\n" \
@@ -932,6 +1171,7 @@ class App(BaseClass): # type: ignore
                     
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
+                    self._update_markdown_preview()
                     self._toggle_ui_state(True)
  
                 self.after(0, update_ui)
@@ -1003,23 +1243,6 @@ class App(BaseClass): # type: ignore
                 self._set_status("Conversion cancelled", "orange")
                 return
 
-        # Validate Markdown tables to prevent malformed data parsing
-        if mode in ("MD -> Excel", "MD -> CSV"):
-            if not has_md_tables(content):
-                from tkinter import messagebox
-                messagebox.showwarning(
-                    parent=self,
-                    title="No Tables Found",
-                    message="No tables were found in the Markdown content.\n\n"
-                            "To convert to Excel or CSV, your Markdown file must contain at least one table in standard Markdown format, for example:\n\n"
-                            "| Column 1 | Column 2 |\n"
-                            "| --- | --- |\n"
-                            "| Value 1 | Value 2 |\n\n"
-                            "Please ensure there is a separator row (like '|---|') below the header row."
-                )
-                self._set_status("No tables found in content", "red")
-                return
-
         warnings = get_md_table_warnings(content)
         if warnings:
             from tkinter import messagebox
@@ -1062,20 +1285,25 @@ class App(BaseClass): # type: ignore
             except Exception:
                 pass
 
+        import time
+        start_time = time.time()
+
         palette = PALETTES[self.current_palette_var.get()]
         self._toggle_ui_state(False)
         self.btn_convert.configure(text="Converting...")
         self.btn_open_file.configure(state="disabled", fg_color=palette["bg_component"], text_color=STYLE["status_gray"])
+        self.btn_open_folder.configure(state="disabled", fg_color=palette["bg_component"], text_color=STYLE["status_gray"])
         self._set_status("Processing conversion and writing file...", "orange")
 
         # Show and start progress bar
-        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 5))
+        self.progress_bar.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(5, 5))
         self.progress_bar.start()
 
         def task():
             try:
                 # Direct dispatcher
                 msg = convert_content(mode, content, out)
+                duration_sec = time.time() - start_time
 
                 color = "green" if msg.startswith("Exported") or msg.startswith("Word") or msg.startswith("Markdown") else "red"
                 
@@ -1087,27 +1315,24 @@ class App(BaseClass): # type: ignore
                                   f"- Conversion mode: {mode}\n\n" \
                                   f"Error:\n{msg}"
                 else:
-                    log_details = f"DOCUMENT EXPORT LOG:\n" \
-                                  f"-----------------------------------\n" \
-                                  f"- Result: SUCCESS\n" \
-                                  f"- Conversion mode: {mode}\n" \
-                                  f"- Generated file: {os.path.basename(out)}\n" \
-                                  f"- Save folder: {os.path.dirname(out)}\n" \
-                                  f"- New size: {os.path.getsize(out) if os.path.exists(out) else 0} bytes\n\n" \
-                                  f"Click the 'OPEN CREATED FILE' button below to open and view your document directly!"
+                    log_details = "" # Will be replaced by success card formatting
 
                 def update_success():
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
-                    self._write_preview(log_details)
                     self._set_status(msg.split("\n")[0] if "\n" in msg else msg, color)
-                    self._toggle_ui_state(True)
+                    
                     if color == "green":
-                        palette_active = PALETTES[self.current_palette_var.get()]
-                        self.btn_open_file.configure(
-                            state="normal", fg_color=palette_active["btn_open_fg"], hover_color=palette_active["btn_open_hover"], text_color=("#ffffff", "#ffffff")
-                        )
+                        # Set Output State
+                        in_p = self.in_path.get().strip() or "editor_content.md"
+                        self.output_state = OutputFileState(in_p, out, duration_sec)
+                        self._write_success_preview(mode)
                         self.is_dirty = False
+                    else:
+                        self.output_state = None
+                        self._write_preview(log_details)
+                    
+                    self._toggle_ui_state(True)
 
                 self.after(0, update_success)
             except Exception as e:
@@ -1115,6 +1340,7 @@ class App(BaseClass): # type: ignore
                 def update_error():
                     self.progress_bar.stop()
                     self.progress_bar.grid_remove()
+                    self.output_state = None
                     self._set_status(f"Conversion error: {err_msg}", "red")
                     self._write_preview(f"Conversion error details:\n{err_msg}")
                     self._toggle_ui_state(True)
@@ -1124,7 +1350,10 @@ class App(BaseClass): # type: ignore
         threading.Thread(target=task, daemon=True).start()
 
     def _open_generated_file(self):
-        out = self.out_path.get().strip()
+        if not self.output_state:
+            self._set_status("No output file available to open!", "orange")
+            return
+        out = self.output_state.out_path
         if out and os.path.exists(out):
             try:
                 if sys.platform == "win32":
@@ -1137,7 +1366,111 @@ class App(BaseClass): # type: ignore
             except Exception as e:
                 self._set_status(f"Failed to open file: {e}", "red")
         else:
-            self._set_status("File does not exist or has not been created yet!", "orange")
+            self._set_status("File no longer exists!", "red")
+            from tkinter import messagebox
+            messagebox.showwarning(parent=self, title="File Not Found", message="The converted file no longer exists at the target location.")
+
+    def _open_containing_folder(self):
+        if not self.output_state:
+            self._set_status("No output file available to show in folder!", "orange")
+            return
+        out = self.output_state.out_path
+        if out and os.path.exists(out):
+            try:
+                if sys.platform == "win32":
+                    subprocess.run(["explorer", "/select,", os.path.normpath(out)])
+                elif sys.platform == "darwin":
+                    subprocess.run(["open", "-R", out])
+                else:
+                    subprocess.run(["xdg-open", os.path.dirname(out)])
+                self._set_status("Opened containing folder", "green")
+            except Exception as e:
+                self._set_status(f"Failed to open folder: {e}", "red")
+        else:
+            self._set_status("File no longer exists!", "red")
+            from tkinter import messagebox
+            messagebox.showwarning(parent=self, title="File Not Found", message="The converted file no longer exists at the target location.")
+
+    def _copy_output_path(self):
+        if not self.output_state:
+            self._set_status("No output file available to copy path!", "orange")
+            return
+        out = self.output_state.out_path
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(out)
+            self._set_status("✓ Path copied to clipboard", "green")
+            
+            if hasattr(self, "_toast_timer_id") and self._toast_timer_id is not None:
+                try:
+                    self.after_cancel(self._toast_timer_id)
+                except Exception:
+                    pass
+            self.btn_copy_path.configure(text="✓ Copied!")
+            self._toast_timer_id = self.after(1500, self._reset_copy_btn_text)
+        except Exception as e:
+            self._set_status(f"Failed to copy path: {e}", "red")
+
+    def _reset_copy_btn_text(self):
+        self.btn_copy_path.configure(text="Copy Path")
+        self._toast_timer_id = None
+
+    def _show_auto_detect_badge(self, mode, file_path):
+        ext = os.path.splitext(file_path)[1].lower().replace(".", "").upper()
+        # "MD -> Excel" -> "Excel"
+        out_fmt = mode.split(" -> ")[1]
+        
+        if hasattr(self, "_badge_timer_id") and self._badge_timer_id is not None:
+            try:
+                self.after_cancel(self._badge_timer_id)
+            except Exception:
+                pass
+            self._badge_timer_id = None
+
+        self.badge_lbl.configure(text=f"✓ {ext} → {out_fmt} detected")
+        self.badge_lbl.pack(side="left", padx=10)
+        self._badge_timer_id = self.after(3000, self._hide_auto_detect_badge)
+
+    def _hide_auto_detect_badge(self):
+        self.badge_lbl.pack_forget()
+        self._badge_timer_id = None
+
+    def _write_success_preview(self, mode):
+        # Configure tag configuration once
+        try:
+            self.preview_box._textbox.tag_config("success_title", foreground="#2ec4b6", font=ctk.CTkFont(family=STYLE["font_family_body"], size=14, weight="bold"))
+            self.preview_box._textbox.tag_config("success_body", font=ctk.CTkFont(family=STYLE["font_family_body"], size=12))
+        except Exception:
+            pass
+
+        self.preview_box.configure(state="normal")
+        self.preview_box.delete("1.0", "end")
+        
+        self.preview_box.insert("end", "✓ CONVERSION COMPLETE\n\n", "success_title")
+        
+        state = self.output_state
+        if not state:
+            return
+            
+        size_bytes = state.size_bytes
+        if size_bytes > 1024 * 1024:
+            size_str = f"{size_bytes / (1024*1024):.2f} MB"
+        else:
+            size_str = f"{size_bytes / 1024:.2f} KB"
+            
+        details = (
+            f"• Input:    {state.in_filename}\n"
+            f"• Output:   {state.out_filename}\n"
+            f"• Location: {state.out_dir}\n"
+            f"• Size:     {size_str} ({size_bytes:,} bytes)\n"
+            f"• Duration: {state.duration_sec:.2f} s\n\n"
+            f"What would you like to do next?\n"
+            f"- Click 'OPEN FILE' to view it.\n"
+            f"- Click 'SHOW IN FOLDER' to highlight it.\n"
+            f"- Click 'Copy Path' to copy path to clipboard."
+        )
+        self.preview_box.insert("end", details, "success_body")
+        self.preview_box.configure(state="disabled")
 
     def _undo(self, event=None):
         if self.is_processing:
@@ -1160,20 +1493,27 @@ class App(BaseClass): # type: ignore
     def _on_drag_enter(self, event):
         if self.is_processing:
             return
-        palette = PALETTES[self.current_palette_var.get()]
-        self.load_bar.configure(border_color=palette["text_accent_primary"], border_width=2)
-        self.drop_lbl.configure(text="Drop the file now!", text_color=palette["text_accent_primary"])
+        if not self._overlay_visible:
+            self._overlay_visible = True
+            palette = PALETTES[self.current_palette_var.get()]
+            self.drop_overlay.configure(border_color=palette["text_accent_primary"])
+            self.drop_overlay.place(relx=0.02, rely=0.1, relwidth=0.96, relheight=0.86)
 
     def _on_drag_leave(self, event=None):
         if self.is_processing:
             return
-        palette = PALETTES[self.current_palette_var.get()]
-        self.load_bar.configure(border_color=palette["border_color"], border_width=1)
-        inp = self.in_path.get().strip()
-        if inp:
-            self.drop_lbl.configure(text=f"Loaded successfully: {os.path.basename(inp)}", text_color=STYLE["status_green"])
-        else:
-            self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...", text_color=palette["text_accent_secondary"])
+        try:
+            # Check if pointer has actually left left_pane bounds
+            x = self.winfo_pointerx() - self.left_pane.winfo_rootx()
+            y = self.winfo_pointery() - self.left_pane.winfo_rooty()
+            w = self.left_pane.winfo_width()
+            h = self.left_pane.winfo_height()
+            if x < 0 or x >= w or y < 0 or y >= h:
+                self._overlay_visible = False
+                self.drop_overlay.place_forget()
+        except Exception:
+            self._overlay_visible = False
+            self.drop_overlay.place_forget()
 
     def _change_appearance_mode(self, mode: str):
         ctk.set_appearance_mode(mode)
@@ -1271,17 +1611,19 @@ class App(BaseClass): # type: ignore
         else:
             self.btn_convert.configure(fg_color=palette["btn_convert_fg"], hover_color=palette["btn_convert_hover"], text_color=("#ffffff", "#ffffff"))
             
-        # Open file button: if normal state, use palette colors, else use component color
-        if self.btn_open_file.cget("state") == "normal":
-            self.btn_open_file.configure(
-                fg_color=palette["btn_open_fg"],
-                hover_color=palette["btn_open_hover"],
-                text_color=("#ffffff", "#ffffff")
-            )
-        else:
-            self.btn_open_file.configure(
-                fg_color=palette["bg_component"]
-            )
+        # Open file, Show folder, Copy path buttons: if normal state, use palette colors, else use component color
+        for btn in (self.btn_open_file, self.btn_open_folder, self.btn_copy_path):
+            if btn.cget("state") == "normal":
+                btn.configure(
+                    fg_color=palette["btn_open_fg"],
+                    hover_color=palette["btn_open_hover"],
+                    text_color=("#ffffff", "#ffffff")
+                )
+            else:
+                btn.configure(
+                    fg_color=palette["bg_component"],
+                    text_color=STYLE["status_gray"]
+                )
             
         # 6. Update OptionMenus button/hover colors
         self.mode_menu.configure(
@@ -1308,6 +1650,15 @@ class App(BaseClass): # type: ignore
         
         # 8. Update search highlight configurations manually
         self._update_highlight_colors()
+
+        # 9. Update preview frame theme and tab selector styling
+        if hasattr(self, "preview_frame"):
+            self.preview_frame.set_theme(palette, STYLE)
+        if hasattr(self, "tab_selector"):
+            self.tab_selector.configure(
+                selected_color=palette["text_accent_primary"],
+                selected_hover_color=palette["btn_convert_hover"]
+            )
 
     def _update_highlight_colors(self):
         appearance_mode = ctk.get_appearance_mode().lower() # "light" or "dark"
@@ -1338,6 +1689,14 @@ class App(BaseClass): # type: ignore
             )
             if not confirm:
                 return
+            # Save draft immediately on exit so it is not lost
+            try:
+                content = self.editor.get("1.0", "end-1c")
+                os.makedirs(os.path.dirname(DRAFT_PATH), exist_ok=True)
+                with open(DRAFT_PATH, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as e:
+                print(f"[DEBUG] Failed to save draft on exit: {e}")
         self.destroy()
 
     def _build_search_panel(self, parent_pane):
@@ -1454,8 +1813,8 @@ class App(BaseClass): # type: ignore
         self.search_panel_visible = show
         
         if show:
-            # Grid into row 2 of left_pane
-            self.search_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=5)
+            # Grid into row 3 of left_pane
+            self.search_frame.grid(row=3, column=0, sticky="ew", padx=15, pady=5)
             self.search_entry.focus()
             self.search_entry.select_range(0, "end")
             self._perform_search()
@@ -1601,3 +1960,339 @@ class App(BaseClass): # type: ignore
         
         self.current_match_idx = -1
         self._perform_search()
+
+    def _show_md_guide(self):
+        import tkinter as tk
+        guide_win = tk.Toplevel(self)
+        guide_win.title("Markdown Syntax Guide")
+        guide_win.geometry("450x440")
+        guide_win.resizable(False, False)
+        
+        # Resolve background theme color
+        bg_color = self.workspace.cget("fg_color")
+        if isinstance(bg_color, tuple):
+            bg_color = bg_color[1] if ctk.get_appearance_mode() == "Dark" else bg_color[0]
+        guide_win.configure(bg=bg_color)
+        
+        # Make it transient & grab focus (modal behavior)
+        guide_win.transient(self)
+        guide_win.grab_set()
+        guide_win.focus_set()
+        
+        fg_color = "#ffffff" if ctk.get_appearance_mode() == "Dark" else "#1d1d1f"
+        
+        title_lbl = tk.Label(
+            guide_win, text="Supported Markdown Formatting",
+            font=("Segoe UI", 14, "bold"),
+            bg=bg_color,
+            fg=fg_color
+        )
+        title_lbl.pack(pady=(15, 10))
+        
+        text_bg = "#1d202b" if ctk.get_appearance_mode() == "Dark" else "#f3f4f6"
+        text_fg = "#f8f8f2" if ctk.get_appearance_mode() == "Dark" else "#1d1d1f"
+        
+        guide_txt = tk.Text(
+            guide_win, width=50, height=18,
+            font=("Consolas", 10),
+            bg=text_bg,
+            fg=text_fg,
+            bd=1,
+            relief="flat",
+            padx=10,
+            pady=10
+        )
+        guide_txt.pack(padx=20, pady=5)
+        
+        cheat_sheet = (
+            "Syntax Cheatsheet:\n"
+            "=========================================\n\n"
+            "1. Headings (Tiêu đề):\n"
+            "   # Heading 1\n"
+            "   ## Heading 2\n"
+            "   ### Heading 3\n\n"
+            "2. Bold (In đậm):\n"
+            "   **text** or __text__\n\n"
+            "3. Italic (In nghiêng):\n"
+            "   *text* or _text_\n\n"
+            "4. Strikethrough (Gạch ngang):\n"
+            "   ~~text~~\n\n"
+            "5. Underline (Gạch chân):\n"
+            "   <u>text</u>\n\n"
+            "6. Inline Code (Mã dòng):\n"
+            "   `code`\n\n"
+            "7. Hyperlink (Liên kết):\n"
+            "   [Link Text](https://url.com)\n\n"
+            "8. Lists (Danh sách):\n"
+            "   - Bullet Item 1\n"
+            "     - Nested Bullet Item (Indent 2 spaces)\n"
+            "   1. Numbered Item 1\n"
+            "     1. Nested Numbered (Indent 2 spaces)\n\n"
+            "9. Tables (Bảng dữ liệu):\n"
+            "   | Header 1 | Header 2 |\n"
+            "   | --- | --- |\n"
+            "   | **Bold Cell** | [Link](url) |\n"
+        )
+        guide_txt.insert("1.0", cheat_sheet)
+        guide_txt.configure(state="disabled")
+        
+        btn_close = tk.Button(
+            guide_win, text="Close", width=12, height=1,
+            font=("Segoe UI", 10, "bold"),
+            bg="#5d3fd3" if ctk.get_appearance_mode() == "Dark" else "#ebe4ff",
+            fg="#ffffff" if ctk.get_appearance_mode() == "Dark" else "#5d3fd3",
+            activebackground=bg_color,
+            bd=1,
+            relief="flat",
+            command=guide_win.destroy
+        )
+        btn_close.pack(pady=(10, 15))
+
+    def _apply_format(self, prefix, suffix):
+        import tkinter as tk
+        try:
+            start = self.editor._textbox.index("sel.first")
+            end = self.editor._textbox.index("sel.last")
+            selected_text = self.editor._textbox.get("sel.first", "sel.last")
+            new_text = f"{prefix}{selected_text}{suffix}"
+            self.editor._textbox.delete("sel.first", "sel.last")
+            self.editor._textbox.insert(start, new_text)
+            new_end = self.editor._textbox.index(f"{start} + {len(new_text)} chars")
+            self.editor._textbox.tag_add("sel", start, new_end)
+            self.editor.focus_set()
+            self._update_counts()
+        except tk.TclError:
+            # If no selection, insert placeholder at cursor and highlight the placeholder
+            cursor_pos = self.editor._textbox.index("insert")
+            self.editor._textbox.insert(cursor_pos, f"{prefix}text{suffix}")
+            text_start = self.editor._textbox.index(f"{cursor_pos} + {len(prefix)} chars")
+            text_end = self.editor._textbox.index(f"{text_start} + 4 chars")
+            self.editor._textbox.tag_add("sel", text_start, text_end)
+            # Move insertion cursor to the start of the 'text' placeholder so typing replaces it immediately!
+            self.editor._textbox.mark_set("insert", text_start)
+            self.editor.focus_set()
+            self._update_counts()
+
+    def _apply_heading(self, heading_mark):
+        import re
+        try:
+            cursor_pos = self.editor._textbox.index("insert")
+            line_num = cursor_pos.split(".")[0]
+            line_start = f"{line_num}.0"
+            line_end = f"{line_num}.end"
+            
+            line_content = self.editor._textbox.get(line_start, line_end)
+            cleaned_line = re.sub(r"^#{1,6}\s*", "", line_content)
+            new_line = f"{heading_mark} {cleaned_line}"
+            
+            self.editor._textbox.delete(line_start, line_end)
+            self.editor._textbox.insert(line_start, new_line)
+            
+            self.editor.focus_set()
+            self._update_counts()
+        except Exception:
+            pass
+
+    def _apply_link(self):
+        from tkinter import simpledialog
+        try:
+            start = self.editor._textbox.index("sel.first")
+            selected_text = self.editor._textbox.get("sel.first", "sel.last")
+            has_selection = True
+        except Exception:
+            selected_text = "Link Text"
+            start = self.editor._textbox.index("insert")
+            has_selection = False
+
+        url = simpledialog.askstring("Insert Link", "Enter URL:", parent=self)
+        if url:
+            new_text = f"[{selected_text}]({url})"
+            if has_selection:
+                try:
+                    self.editor._textbox.delete("sel.first", "sel.last")
+                except Exception:
+                    pass
+            self.editor._textbox.insert(start, new_text)
+            
+            if not has_selection:
+                # Highlight only the placeholder link text
+                text_start = self.editor._textbox.index(f"{start} + 1 chars")
+                text_end = self.editor._textbox.index(f"{text_start} + {len(selected_text)} chars")
+                self.editor._textbox.tag_add("sel", text_start, text_end)
+                self.editor._textbox.mark_set("insert", text_start)
+                
+            self.editor.focus_set()
+            self._update_counts()
+
+    def _insert_table(self):
+        cursor_pos = self.editor._textbox.index("insert")
+        table_template = (
+            "\n| Column 1 | Column 2 |\n"
+            "| --- | --- |\n"
+            "| Row 1 Cell 1 | Row 1 Cell 2 |\n"
+            "| Row 2 Cell 1 | Row 2 Cell 2 |\n"
+        )
+        self.editor._textbox.insert(cursor_pos, table_template)
+        self.editor.focus_set()
+        self._update_counts()
+
+    def _on_editor_key_press(self, event):
+        if event.char and len(event.char) == 1:
+            # Check if it is a printable character, Enter, or Tab
+            if ord(event.char) >= 32 or event.char in ('\r', '\n', '\t'):
+                try:
+                    if self.editor._textbox.tag_ranges("sel"):
+                        start = self.editor._textbox.index("sel.first")
+                        self.editor._textbox.delete("sel.first", "sel.last")
+                        self.editor._textbox.mark_set("insert", start)
+                except Exception:
+                    pass
+
+    def _init_autosave(self):
+        # Trigger restoration check asynchronously after 1 second to stabilize layout
+        self.after(1000, self._restore_draft_if_needed)
+        # Start the periodic background autosave loop
+        self._periodic_autosave()
+
+    def _restore_draft_if_needed(self):
+        if os.path.exists(DRAFT_PATH):
+            try:
+                with open(DRAFT_PATH, "r", encoding="utf-8") as f:
+                    draft_content = f.read()
+                if draft_content.strip():
+                    self._show_restore_dialog(draft_content)
+            except Exception as e:
+                print(f"[DEBUG] Failed to check/restore draft on startup: {e}")
+
+    def _show_restore_dialog(self, draft_content):
+        import tkinter as tk
+        palette = PALETTES[self.current_palette_var.get()]
+        
+        # Helper to resolve CustomTkinter color tuples to native strings
+        def resolve_color(color_val):
+            if isinstance(color_val, (tuple, list)):
+                if self.appearance_mode_var.get() == "Light":
+                    return color_val[0]
+                else:
+                    return color_val[1]
+            return color_val
+
+        # Determine theme-based colors
+        bg_color = resolve_color(palette.get("bg_component", "#1e1e2e"))
+        text_color = "#ffffff" if self.appearance_mode_var.get() == "Dark" else "#000000"
+        accent_color = resolve_color(palette.get("btn_convert_fg", "#7b2cbf"))
+        accent_hover = resolve_color(palette.get("btn_convert_hover", "#9d4edd"))
+        discard_color = resolve_color(STYLE.get("status_red", "#ef476f"))
+        later_bg = resolve_color(STYLE.get("btn_utility_fg", "#2d3748"))
+        later_hover = resolve_color(STYLE.get("btn_utility_hover", "#3a475c"))
+        later_fg = resolve_color(STYLE.get("text_primary", "#ffffff"))
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Recover Unsaved Draft")
+        dialog.geometry("460x180")
+        dialog.resizable(False, False)
+        dialog.configure(bg=bg_color)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.focus_set()
+        
+        # Center dialog relative to screen
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        dlg_x = (screen_w - 460) // 2
+        dlg_y = (screen_h - 180) // 2
+        dialog.geometry(f"460x180+{max(dlg_x, 0)}+{max(dlg_y, 0)}")
+
+        # Fonts
+        font_family = STYLE["font_family_body"]
+        title_font = (font_family, 10, "bold")
+        body_font = (font_family, 11)
+
+        lbl_msg = tk.Label(
+            dialog,
+            text="We found an unsaved draft from your previous session.\nWould you like to restore it?",
+            font=body_font,
+            bg=bg_color,
+            fg=text_color,
+            justify="center"
+        )
+        lbl_msg.pack(pady=(25, 20), padx=20)
+
+        btn_frame = tk.Frame(dialog, bg=bg_color)
+        btn_frame.pack(pady=(5, 15))
+
+        def on_restore():
+            self.editor.configure(state="normal")
+            self.editor.delete("1.0", "end")
+            self.editor.insert("1.0", draft_content)
+            self._update_counts()
+            self._set_status("Restored autosaved draft", "green")
+            dialog.destroy()
+            try:
+                os.remove(DRAFT_PATH)
+            except Exception:
+                pass
+
+        def on_discard():
+            try:
+                os.remove(DRAFT_PATH)
+            except Exception:
+                pass
+            self._set_status("Discarded unsaved draft", "orange")
+            dialog.destroy()
+
+        def on_later():
+            self._set_status("Draft recovery postponed", "orange")
+            dialog.destroy()
+
+        btn_restore = tk.Button(
+            btn_frame, text="Restore", width=12, height=1,
+            font=title_font,
+            bg=accent_color,
+            fg="#ffffff",
+            activebackground=accent_hover,
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            command=on_restore
+        )
+        btn_restore.pack(side="left", padx=10)
+
+        btn_discard = tk.Button(
+            btn_frame, text="Discard", width=12, height=1,
+            font=title_font,
+            bg=discard_color,
+            fg="#ffffff",
+            activebackground=discard_color,
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            command=on_discard
+        )
+        btn_discard.pack(side="left", padx=10)
+
+        btn_later = tk.Button(
+            btn_frame, text="Later", width=12, height=1,
+            font=title_font,
+            bg=later_bg,
+            fg=later_fg,
+            activebackground=later_hover,
+            activeforeground=later_fg,
+            relief="flat",
+            bd=0,
+            command=on_later
+        )
+        btn_later.pack(side="left", padx=10)
+
+    def _periodic_autosave(self):
+        if self.is_dirty and not self.is_processing:
+            try:
+                content = self.editor.get("1.0", "end-1c")
+                os.makedirs(os.path.dirname(DRAFT_PATH), exist_ok=True)
+                with open(DRAFT_PATH, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as e:
+                print(f"[DEBUG] Failed to autosave draft: {e}")
+        
+        # Schedule the next autosave check in 5000 milliseconds (5 seconds)
+        self.after(5000, self._periodic_autosave)

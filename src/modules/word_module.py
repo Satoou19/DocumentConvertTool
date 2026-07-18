@@ -16,103 +16,152 @@ class WordModule(BaseDocumentModule):
 
     @property
     def required_dependencies(self) -> list[str]:
-        return ["python-docx"]
+        return ["python-docx", "markitdown"]
 
     def load_to_markdown(self, file_path: str) -> str:
         """Extracts Word .docx to clean Markdown text, preserving tables, headings, bold/italic styles, and lists."""
-        from docx.oxml.text.paragraph import CT_P
-        from docx.oxml.table import CT_Tbl
-        from docx.text.paragraph import Paragraph
-        from docx.table import Table
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
 
-        if not zipfile.is_zipfile(file_path):
-            return "⚠️ File Validation Error: Invalid file. Please select a valid DOCX document."
+        try:
+            from docx.oxml.text.paragraph import CT_P
+            from docx.oxml.table import CT_Tbl
+            from docx.text.paragraph import Paragraph
+            from docx.table import Table
 
-        doc = docx.Document(file_path)
-        parts = []
+            if not zipfile.is_zipfile(file_path):
+                return "⚠️ File Validation Error: Invalid file. Please select a valid DOCX document."
 
-        def iter_block_items(parent):
-            parent_elm = parent.element.body
-            for child in parent_elm.iterchildren():
-                if isinstance(child, CT_P):
-                    yield Paragraph(child, parent)
-                elif isinstance(child, CT_Tbl):
-                    yield Table(child, parent)
+            doc = docx.Document(file_path)
+            parts = []
 
-        for block in iter_block_items(doc):
-            if isinstance(block, Paragraph):
-                text = block.text.strip()
-                if not text:
-                    parts.append("")
-                    continue
-                
-                style_name = (block.style.name or "").lower() if block.style else ""
-                
-                def run_contains_image(run):
-                    xml = getattr(run._element, "xml", "")
-                    return "<w:drawing" in xml or "<w:pict" in xml or "<a:blip" in xml
+            def iter_block_items(parent):
+                parent_elm = parent.element.body
+                for child in parent_elm.iterchildren():
+                    if isinstance(child, CT_P):
+                        yield Paragraph(child, parent)
+                    elif isinstance(child, CT_Tbl):
+                        yield Table(child, parent)
 
-                para_parts = []
-                for run in block.runs:
-                    if run_contains_image(run):
-                        para_parts.append("[image]")
-                        continue
-                    run_text = run.text
-                    if not run_text:
-                        continue
-                    stripped_run = run_text.strip()
-                    if not stripped_run:
-                        para_parts.append(run_text)
-                        continue
+            from docx.oxml.ns import qn
+            from src.core.converters import wrap_text_style
+
+            for block in iter_block_items(doc):
+                if isinstance(block, Paragraph):
+                    style_name = (block.style.name or "").lower() if block.style else ""
                     
-                    r_text = run_text
-                    if run.bold:
-                        r_text = r_text.replace(stripped_run, f"**{stripped_run}**")
-                    if run.italic:
-                        r_text = r_text.replace(stripped_run, f"*{stripped_run}*")
-                    para_parts.append(r_text)
-                
-                para_text = "".join(para_parts).strip()
-                if not para_text:
-                    para_text = text
-                
-                style_name = (block.style.name or "").lower() if block.style else ""
-                is_heading = style_name.startswith("heading ") or re.match(r"^(đề mục|tiêu đề)\s*\d", style_name)
+                    def run_contains_image(run):
+                        xml = getattr(run._element, "xml", "")
+                        return "<w:drawing" in xml or "<w:pict" in xml or "<a:blip" in xml
 
-                if is_heading:
-                    try:
-                        level = int(style_name.split()[-1])
+                    para_parts = []
+                    for child in block._element:
+                        if child.tag == qn('w:r'):
+                            run = docx.text.run.Run(child, block)
+                            if run_contains_image(run):
+                                para_parts.append("[image]")
+                                continue
+                            if not run.text:
+                                continue
+                            formatted = wrap_text_style(
+                                run.text,
+                                bold=run.bold,
+                                italic=run.italic,
+                                strike=run.font.strike,
+                                underline=run.font.underline
+                            )
+                            para_parts.append(formatted)
+                        elif child.tag == qn('w:hyperlink'):
+                            r_id = child.get(qn('r:id'))
+                            url = ""
+                            if r_id:
+                                try:
+                                    url = block.part.rels[r_id].target_ref
+                                except Exception:
+                                    pass
+                            link_parts = []
+                            for sub_child in child:
+                                if sub_child.tag == qn('w:r'):
+                                    run = docx.text.run.Run(sub_child, block)
+                                    if run_contains_image(run):
+                                        link_parts.append("[image]")
+                                        continue
+                                    if not run.text:
+                                        continue
+                                    formatted = wrap_text_style(
+                                        run.text,
+                                        bold=run.bold,
+                                        italic=run.italic,
+                                        strike=run.font.strike,
+                                        underline=run.font.underline
+                                    )
+                                    link_parts.append(formatted)
+                            link_text = "".join(link_parts)
+                            if link_text:
+                                if url:
+                                    para_parts.append(f"[{link_text}]({url})")
+                                else:
+                                    para_parts.append(link_text)
+                    
+                    para_text = "".join(para_parts).strip()
+                    if not para_text:
+                        if block.text.strip():
+                            para_text = block.text.strip()
+                        else:
+                            parts.append("")
+                            continue
+                    
+                    is_heading = style_name.startswith("heading") or re.match(r"^(đề mục|tiêu đề)\s*\d", style_name)
+
+                    if is_heading:
+                        m = re.search(r"\d+", style_name)
+                        level = int(m.group(0)) if m else 1
                         parts.append("#" * level + " " + para_text)
-                    except ValueError:
+                    elif "bullet" in style_name:
+                        m = re.search(r"\d+", style_name)
+                        level = int(m.group(0)) if m else 1
+                        indent = "  " * (level - 1)
+                        parts.append(indent + "- " + para_text)
+                    elif "number" in style_name or style_name.startswith("list"):
+                        m = re.search(r"\d+", style_name)
+                        level = int(m.group(0)) if m else 1
+                        indent = "  " * (level - 1)
+                        parts.append(indent + "1. " + para_text)
+                    else:
                         parts.append(para_text)
-                elif "bullet" in style_name:
-                    parts.append("- " + para_text)
-                elif "number" in style_name or style_name.startswith("list"):
-                    parts.append("1. " + para_text)
-                else:
-                    parts.append(para_text)
 
-            elif isinstance(block, Table):
-                table_parts = []
-                rows_data = []
-                for row in block.rows:
-                    row_cells = []
-                    for cell in row.cells:
-                        cell_text = cell.text.strip().replace("\n", " ").replace("|", "\\|")
-                        row_cells.append(cell_text)
-                    rows_data.append(row_cells)
-                
-                if rows_data:
-                    header = "| " + " | ".join(rows_data[0]) + " |"
-                    sep = "| " + " | ".join("---" for _ in rows_data[0]) + " |"
-                    table_parts.append(header)
-                    table_parts.append(sep)
-                    for row in rows_data[1:]:
-                        table_parts.append("| " + " | ".join(row) + " |")
-                    parts.append("\n".join(table_parts))
-                    parts.append("")
+                elif isinstance(block, Table):
+                    table_parts = []
+                    rows_data = []
+                    for row in block.rows:
+                        row_cells = []
+                        for cell in row.cells:
+                            cell_text = cell.text.strip().replace("\n", " ").replace("|", "\\|")
+                            row_cells.append(cell_text)
+                        rows_data.append(row_cells)
+                    
+                    if rows_data:
+                        header = "| " + " | ".join(rows_data[0]) + " |"
+                        sep = "| " + " | ".join("---" for _ in rows_data[0]) + " |"
+                        table_parts.append(header)
+                        table_parts.append(sep)
+                        for row in rows_data[1:]:
+                            table_parts.append("| " + " | ".join(row) + " |")
+                        parts.append("\n".join(table_parts))
 
-        return "\n\n".join(parts)
+            return "\n\n".join(parts)
+        except Exception as e:
+            import sys
+            print(f"[DEBUG] Custom Word parsing failed: {e}. Falling back to markitdown.", file=sys.stderr)
+            try:
+                from markitdown import MarkItDown
+                md = MarkItDown()
+                result = md.convert(file_path)
+                if not result or not result.text_content:
+                    return "*(Empty Word Document)*"
+                return result.text_content
+            except Exception as inner_e:
+                raise RuntimeError(f"Word Ingestion Error: Failed to extract text layer from DOCX file. Detail: {str(inner_e)}")
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
         """Converts Markdown text to formatted Word document."""
@@ -120,7 +169,6 @@ class WordModule(BaseDocumentModule):
         from docx.shared import Pt, RGBColor
         from docx.oxml.ns import qn
         from docx.oxml import OxmlElement
-
         FONT = "Arial"
         HEADING_SIZES = {1: 20, 2: 16, 3: 13, 4: 12, 5: 11, 6: 11}
         HEADING_COLORS = {i: "404040" for i in range(1, 7)}
@@ -132,16 +180,86 @@ class WordModule(BaseDocumentModule):
             if color:
                 run.font.color.rgb = RGBColor.from_string(color)
 
+        def add_hyperlink_run(paragraph, text, url, size=11, bold=False, italic=False, strike=False, underline=True, color="0000FF"):
+            part = paragraph.part
+            r_id = part.relate_to(url, docx.opc.constants.RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+
+            hyperlink = OxmlElement('w:hyperlink')
+            hyperlink.set(qn('r:id'), r_id)
+
+            new_run = OxmlElement('w:r')
+            rPr = OxmlElement('w:rPr')
+
+            rFonts = OxmlElement('w:rFonts')
+            rFonts.set(qn('w:ascii'), FONT)
+            rFonts.set(qn('w:hAnsi'), FONT)
+            rPr.append(rFonts)
+
+            sz = OxmlElement('w:sz')
+            sz.set(qn('w:val'), str(int(size * 2)))
+            rPr.append(sz)
+
+            if bold:
+                b = OxmlElement('w:b')
+                rPr.append(b)
+            if italic:
+                i = OxmlElement('w:i')
+                rPr.append(i)
+            if strike:
+                strike_el = OxmlElement('w:strike')
+                rPr.append(strike_el)
+            if underline:
+                u = OxmlElement('w:u')
+                u.set(qn('w:val'), 'single')
+                rPr.append(u)
+
+            if color:
+                c = OxmlElement('w:color')
+                c.set(qn('w:val'), color)
+                rPr.append(c)
+
+            new_run.append(rPr)
+            
+            text_node = OxmlElement('w:t')
+            text_node.text = text
+            new_run.append(text_node)
+
+            hyperlink.append(new_run)
+            paragraph._p.append(hyperlink)
+            return hyperlink
+
+        def add_formatted_runs(paragraph, text, size=11, default_bold=False, default_color=None):
+            from src.core.converters import parse_inline
+            segments = parse_inline(text, bold=default_bold)
+            for seg in segments:
+                if seg.url:
+                    add_hyperlink_run(
+                        paragraph, 
+                        seg.text, 
+                        seg.url, 
+                        size=size, 
+                        bold=seg.bold, 
+                        italic=seg.italic, 
+                        strike=seg.strike, 
+                        underline=True, 
+                        color="0000FF"
+                    )
+                else:
+                    run = paragraph.add_run(seg.text)
+                    run.font.name = "Consolas" if seg.code else FONT
+                    run.font.size = Pt(size - 1) if seg.code else Pt(size)
+                    run.font.bold = seg.bold
+                    run.font.italic = seg.italic
+                    run.font.strike = seg.strike
+                    run.font.underline = seg.underline
+                    if seg.code:
+                        run.font.color.rgb = RGBColor(0xA5, 0x2A, 0x2A)
+                    elif default_color:
+                        run.font.color.rgb = RGBColor.from_string(default_color)
+
         def add_paragraph_with_font(doc, text, size=11, bold=False, color=None, style=None):
             p = doc.add_paragraph(style=style) if style else doc.add_paragraph()
-            parts = re.split(r"(\*\*.*?\*\*)", text)
-            for part in parts:
-                if part.startswith("**") and part.endswith("**"):
-                    run = p.add_run(part[2:-2])
-                    set_font(run, size=size, bold=True, color=color)
-                else:
-                    run = p.add_run(part)
-                    set_font(run, size=size, bold=bold, color=color)
+            add_formatted_runs(p, text, size=size, default_bold=bold, default_color=color)
             return p
 
         lines = markdown_content.splitlines()
@@ -157,9 +275,8 @@ class WordModule(BaseDocumentModule):
             m = re.match(r"^(#{1,6})\s+(.*)", line)
             if m:
                 level = len(m.group(1))
-                heading = doc.add_heading(m.group(2), level=min(level, 9))
-                for run in heading.runs:
-                    set_font(run, size=HEADING_SIZES[level], bold=True, color=HEADING_COLORS[level])
+                heading = doc.add_heading('', level=min(level, 9))
+                add_formatted_runs(heading, m.group(2), size=HEADING_SIZES[level], default_bold=True, default_color=HEADING_COLORS[level])
                 heading.paragraph_format.space_before = Pt(10)
                 heading.paragraph_format.space_after = Pt(4)
                 i += 1
@@ -198,13 +315,23 @@ class WordModule(BaseDocumentModule):
 
             m = re.match(r"^(\s*)[-*+]\s+(.*)", line)
             if m:
-                add_paragraph_with_font(doc, m.group(2), style="List Bullet")
+                indent_spaces = len(m.group(1))
+                level = (indent_spaces // 2) + 1
+                style_name = f"List Bullet {level}" if level > 1 else "List Bullet"
+                if style_name not in doc.styles:
+                    style_name = "List Bullet"
+                add_paragraph_with_font(doc, m.group(2), style=style_name)
                 i += 1
                 continue
 
-            m = re.match(r"^\s*\d+\.\s+(.*)", line)
+            m = re.match(r"^(\s*)\d+\.\s+(.*)", line)
             if m:
-                add_paragraph_with_font(doc, m.group(1), style="List Number")
+                indent_spaces = len(m.group(1))
+                level = (indent_spaces // 2) + 1
+                style_name = f"List Number {level}" if level > 1 else "List Number"
+                if style_name not in doc.styles:
+                    style_name = "List Number"
+                add_paragraph_with_font(doc, m.group(2), style=style_name)
                 i += 1
                 continue
 

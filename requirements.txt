@@ -6,3 +6,4 @@ python-docx
 mammoth
 pyinstaller
 markitdown[pdf]
+markdown2

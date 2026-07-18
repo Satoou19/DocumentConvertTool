@@ -141,6 +141,112 @@ class PDFModule(BaseDocumentModule):
                     parts.append("| " + " | ".join(cell.replace("\n", "<br>").replace("|", "\\|") for cell in r) + " |")
                 return "\n".join(parts)
 
+            def _extract_rich_text(cropped_page):
+                chars = cropped_page.chars
+                if not chars:
+                    return ""
+                
+                # Sort characters by top coordinate first
+                chars_sorted = sorted(chars, key=lambda c: (c["top"], c["x0"]))
+                
+                # Group characters into lines using a tolerance of 3 pixels
+                lines = []
+                current_line = []
+                current_top = None
+                
+                for char in chars_sorted:
+                    top = char["top"]
+                    if current_top is None:
+                        current_top = top
+                        current_line.append(char)
+                    elif abs(top - current_top) <= 3:
+                        current_line.append(char)
+                    else:
+                        lines.append(current_line)
+                        current_line = [char]
+                        current_top = top
+                if current_line:
+                    lines.append(current_line)
+                    
+                line_texts = []
+                for line in lines:
+                    # Sort characters on the line from left to right
+                    line.sort(key=lambda c: c["x0"])
+                    
+                    # Merge characters into runs that share the same font properties
+                    runs = []
+                    current_run_text = ""
+                    current_font = None
+                    total_size = 0
+                    char_count = 0
+                    
+                    for char in line:
+                        font = char.get("fontname", "").lower()
+                        bold = "bold" in font
+                        italic = "italic" in font or "oblique" in font
+                        
+                        size = char.get("size", 10)
+                        total_size += size
+                        char_count += 1
+                        
+                        style_key = (bold, italic)
+                        if current_font is None:
+                            current_font = style_key
+                            current_run_text = char["text"]
+                        elif style_key == current_font:
+                            # Check distance to previous character to insert spaces
+                            last_char = line[line.index(char) - 1]
+                            gap = char["x0"] - last_char["x1"]
+                            char_width = char["x1"] - char["x0"]
+                            if gap > char_width * 0.25 and not current_run_text.endswith(" ") and char["text"] != " ":
+                                current_run_text += " "
+                            current_run_text += char["text"]
+                        else:
+                            runs.append((current_run_text, current_font))
+                            current_font = style_key
+                            current_run_text = char["text"]
+                    if current_run_text:
+                        runs.append((current_run_text, current_font))
+                        
+                    # Calculate average line size for heading detection
+                    avg_size = total_size / char_count if char_count > 0 else 10
+                    
+                    # Format runs into markdown syntax
+                    formatted_runs = []
+                    for text, (bold, italic) in runs:
+                        stripped = text.strip()
+                        if not stripped:
+                            formatted_runs.append(text)
+                            continue
+                            
+                        leading_spaces = text[:len(text) - len(text.lstrip())]
+                        trailing_spaces = text[len(text.rstrip()):]
+                        
+                        val = stripped
+                        if bold and italic:
+                            val = f"***{val}***"
+                        elif bold:
+                            val = f"**{val}**"
+                        elif italic:
+                            val = f"*{val}*"
+                            
+                        formatted_runs.append(f"{leading_spaces}{val}{trailing_spaces}")
+                        
+                    line_text = "".join(formatted_runs).strip()
+                    
+                    if line_text:
+                        # Prepend heading tags if the line has larger text size
+                        if avg_size >= 20:
+                            line_text = f"# {line_text}"
+                        elif 16 <= avg_size < 20:
+                            line_text = f"## {line_text}"
+                        elif 12.5 <= avg_size < 16:
+                            line_text = f"### {line_text}"
+                            
+                    line_texts.append(line_text)
+                    
+                return "\n".join(line_texts)
+
             doc_elements = []
             settings = {"snap_tolerance": 10, "join_tolerance": 10}
             
@@ -153,7 +259,7 @@ class PDFModule(BaseDocumentModule):
                         bx0, btop, bx1, bbottom = t.bbox
                         if btop > current_y + 2:
                             cropped = page.crop((0, current_y, page.width, btop))
-                            text_slice = cropped.extract_text()
+                            text_slice = _extract_rich_text(cropped)
                             if text_slice:
                                 doc_elements.append({"type": "text", "content": text_slice})
                         
@@ -167,7 +273,7 @@ class PDFModule(BaseDocumentModule):
                         
                     if current_y < page.height:
                         cropped = page.crop((0, current_y, page.width, page.height))
-                        text_slice = cropped.extract_text()
+                        text_slice = _extract_rich_text(cropped)
                         if text_slice:
                             doc_elements.append({"type": "text", "content": text_slice})
                             
@@ -267,7 +373,76 @@ class PDFModule(BaseDocumentModule):
                 raise RuntimeError(f"PDF Ingestion Error: Failed to extract text layer from PDF file. Detail: {str(inner_e)}")
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
-        """MD -> PDF conversion is not supported at this stage."""
-        raise NotImplementedError("MD → PDF requires html_module first (MD → HTML → PDF via WeasyPrint), coming in a follow-up task.")
+        """Converts Markdown text to formatted PDF document using markdown-pdf."""
+        import re
+        try:
+            # Pre-process Markdown: replace ~~text~~ with <del>text</del> for strikethrough support
+            html_content = re.sub(r"~~(.*?)~~", r"<del>\1</del>", markdown_content)
+
+            from markdown_pdf import MarkdownPdf, Section
+            
+            # CSS Stylesheet for professional layout matching the app's aesthetics
+            css = """
+            body {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                line-height: 1.5;
+                color: #333333;
+            }
+            h1, h2, h3 {
+                color: #1a1a1a;
+                margin-top: 20px;
+                margin-bottom: 10px;
+            }
+            h1 { border-bottom: 1px solid #eaecef; padding-bottom: 5px; }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                margin-top: 15px;
+                margin-bottom: 15px;
+            }
+            th, td {
+                border: 1px solid #cccccc;
+                padding: 8px 12px;
+                text-align: left;
+            }
+            th {
+                background-color: #f6f8fa;
+                font-weight: bold;
+            }
+            tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            code {
+                background-color: #f0f0f0;
+                padding: 2px 6px;
+                font-family: 'Consolas', monospace;
+                font-size: 0.9em;
+                border-radius: 3px;
+            }
+            del {
+                text-decoration: line-through;
+                color: #6a737d;
+            }
+            a {
+                color: #0366d6;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+            """
+            
+            pdf = MarkdownPdf(toc_level=2)
+            pdf.add_section(Section(html_content), user_css=css)
+            
+            # Ensure output directory exists
+            out_dir = os.path.dirname(out_path)
+            if out_dir and not os.path.exists(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
+                
+            pdf.save(out_path)
+            return f"Exported successfully to {os.path.basename(out_path)}"
+        except Exception as e:
+            raise RuntimeError(f"PDF Export Error: Failed to generate PDF document. Detail: {str(e)}")
 
 ModuleRegistry.register(PDFModule())
