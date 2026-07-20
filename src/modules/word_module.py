@@ -45,6 +45,32 @@ class WordModule(BaseDocumentModule):
 
             from docx.oxml.ns import qn
             from src.core.converters import wrap_text_style
+            from src.services.media_asset_manager import MediaAssetManager
+            asset_mgr = MediaAssetManager()
+
+            def extract_and_get_link(run) -> str:
+                xml = run._element.xml
+                rId_match = re.search(r'(?:r:embed|embed)="([^"]+)"', xml)
+                if rId_match:
+                    rId = rId_match.group(1)
+                    try:
+                        image_part = doc.part.related_parts[rId]
+                        if hasattr(image_part, "image"):
+                            image_bytes = image_part.image.blob
+                            ext = "png"
+                            if hasattr(image_part.image, "ext") and image_part.image.ext:
+                                ext = image_part.image.ext
+                            elif hasattr(image_part.image, "content_type") and image_part.image.content_type:
+                                ct = image_part.image.content_type
+                                if "/" in ct:
+                                    ext = ct.split("/")[1]
+                            
+                            filename = f"image_{rId}.{ext}"
+                            virtual_uri = asset_mgr.register_image(image_bytes, filename)
+                            return f"![image]({virtual_uri})"
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to extract run image with rId {rId}: {e}")
+                return "[image]"
 
             for block in iter_block_items(doc):
                 if isinstance(block, Paragraph):
@@ -59,7 +85,7 @@ class WordModule(BaseDocumentModule):
                         if child.tag == qn('w:r'):
                             run = docx.text.run.Run(child, block)
                             if run_contains_image(run):
-                                para_parts.append("[image]")
+                                para_parts.append(extract_and_get_link(run))
                                 continue
                             if not run.text:
                                 continue
@@ -81,21 +107,21 @@ class WordModule(BaseDocumentModule):
                                     pass
                             link_parts = []
                             for sub_child in child:
-                                if sub_child.tag == qn('w:r'):
-                                    run = docx.text.run.Run(sub_child, block)
-                                    if run_contains_image(run):
-                                        link_parts.append("[image]")
-                                        continue
-                                    if not run.text:
-                                        continue
-                                    formatted = wrap_text_style(
-                                        run.text,
-                                        bold=run.bold,
-                                        italic=run.italic,
-                                        strike=run.font.strike,
-                                        underline=run.font.underline
-                                    )
-                                    link_parts.append(formatted)
+                                  if sub_child.tag == qn('w:r'):
+                                     run = docx.text.run.Run(sub_child, block)
+                                     if run_contains_image(run):
+                                         link_parts.append(extract_and_get_link(run))
+                                         continue
+                                     if not run.text:
+                                         continue
+                                     formatted = wrap_text_style(
+                                         run.text,
+                                         bold=run.bold,
+                                         italic=run.italic,
+                                         strike=run.font.strike,
+                                         underline=run.font.underline
+                                     )
+                                     link_parts.append(formatted)
                             link_text = "".join(link_parts)
                             if link_text:
                                 if url:

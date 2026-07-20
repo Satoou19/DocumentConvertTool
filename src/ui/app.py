@@ -617,7 +617,7 @@ class App(BaseClass): # type: ignore
 
         # Path row
         row_out = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
-        row_out.pack(fill="x", padx=12, pady=(5, 10))
+        row_out.pack(fill="x", padx=12, pady=5)
         self.lbl_out = ctk.CTkLabel(
             row_out, text="Output:", width=90, anchor="w", 
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
@@ -655,6 +655,51 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12)
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
+
+        # Cache Folder row
+        row_cache = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
+        row_cache.pack(fill="x", padx=12, pady=(5, 10))
+        ctk.CTkLabel(
+            row_cache, text="Media Cache:", width=90, anchor="w", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            text_color=STYLE["text_muted"]
+        ).pack(side="left")
+        
+        self.btn_browse_cache = ctk.CTkButton(
+            row_cache, text="Browse", width=65, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            command=self._browse_cache_folder
+        )
+        self.btn_browse_cache.pack(side="right", padx=2)
+
+        self.btn_open_cache = ctk.CTkButton(
+            row_cache, text="Open Cache", width=85, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            command=self._open_cache_folder
+        )
+        self.btn_open_cache.pack(side="right", padx=2)
+        
+        from src.services.media_asset_manager import MediaAssetManager
+        default_cache = MediaAssetManager().cache_dir
+
+        self.cache_path_entry = ctk.CTkEntry(
+            row_cache,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            height=28
+        )
+        self.cache_path_entry.insert(0, default_cache)
+        self.cache_path_entry.pack(side="left", fill="x", expand=True, padx=5)
+        self.cache_path_entry.bind("<KeyRelease>", self._on_cache_entry_changed)
 
         # Segmented Tab Controller
         self.tab_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", height=35)
@@ -781,6 +826,16 @@ class App(BaseClass): # type: ignore
 
         self._init_autosave()
 
+        # Clean up stale preview media assets in the background
+        def run_cleanup():
+            try:
+                from src.services.media_asset_manager import MediaAssetManager
+                MediaAssetManager().cleanup_cache(7)
+            except Exception as e:
+                print(f"[DEBUG] App: Failed to run background cache cleanup: {e}")
+        threading.Thread(target=run_cleanup, daemon=True).start()
+
+
     # ── Internal Actions & Event Handlers ─────────────────────────────────────
 
     def _cfg(self):
@@ -873,7 +928,9 @@ class App(BaseClass): # type: ignore
         if self.tab_var.get() == "Document Preview":
             is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
             content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
-            self.preview_frame.update_preview(content)
+            from src.services.media_asset_manager import MediaAssetManager
+            base_dir = MediaAssetManager().get_session_dir()
+            self.preview_frame.update_preview(content, base_dir=base_dir)
 
     def _on_tab_change(self, selected_tab: str):
         if selected_tab == "Document Preview":
@@ -1025,6 +1082,8 @@ class App(BaseClass): # type: ignore
             self._load_file_to_editor(path)
 
     def _load_file_to_editor(self, path: str):
+        from src.services.media_asset_manager import MediaAssetManager
+        MediaAssetManager().start_session(path)
         result = load_document(path)
         if not result.success:
             self.in_path.set("")
@@ -1202,6 +1261,45 @@ class App(BaseClass): # type: ignore
         )
         if path:
             self.out_path.set(path)
+
+    def _browse_cache_folder(self):
+        from src.services.media_asset_manager import MediaAssetManager
+        current = MediaAssetManager().cache_dir
+        path = filedialog.askdirectory(parent=self, initialdir=current, title="Select Cache Folder for Images")
+        if path:
+            self.cache_path_entry.delete(0, "end")
+            self.cache_path_entry.insert(0, path)
+            MediaAssetManager().cache_dir = path
+            
+            # Reload currently loaded document to repopulate images in the new cache folder
+            in_file = self.in_path.get().strip()
+            if in_file and os.path.exists(in_file):
+                self._load_file_to_editor(in_file)
+
+    def _open_cache_folder(self):
+        from src.services.media_asset_manager import MediaAssetManager
+        path = MediaAssetManager().get_session_dir()
+        if not os.path.exists(path):
+            path = MediaAssetManager().cache_dir
+            
+        if os.path.exists(path):
+            try:
+                if os.name == 'nt':
+                    os.startfile(path)
+                elif sys.platform == 'darwin':
+                    subprocess.Popen(['open', path])
+                else:
+                    subprocess.Popen(['xdg-open', path])
+            except Exception as e:
+                self._set_status(f"Failed to open cache: {e}", "red")
+        else:
+            self._set_status("Cache folder does not exist!", "orange")
+
+    def _on_cache_entry_changed(self, event=None):
+        new_path = self.cache_path_entry.get().strip()
+        if new_path:
+            from src.services.media_asset_manager import MediaAssetManager
+            MediaAssetManager().cache_dir = new_path
 
     # ── Execute Document Generation & Export ─────────────────────────────────
 

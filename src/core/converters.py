@@ -32,13 +32,15 @@ def parse_md_tables(content: str) -> list:
 
 
 def save_markdown_from_text(content: str, out_path: str) -> str:
+    from src.services.media_asset_manager import MediaAssetManager
+    final_content = MediaAssetManager().export_assets(content, out_path)
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write(final_content)
     return f"Markdown file saved successfully -> {os.path.basename(out_path)}"
 
 
 class TextSegment:
-    def __init__(self, text: str, bold: bool = False, italic: bool = False, strike: bool = False, underline: bool = False, code: bool = False, url: str = None):
+    def __init__(self, text: str, bold: bool = False, italic: bool = False, strike: bool = False, underline: bool = False, code: bool = False, url: str = None, is_image: bool = False):
         self.text = text
         self.bold = bold
         self.italic = italic
@@ -46,15 +48,18 @@ class TextSegment:
         self.underline = underline
         self.code = code
         self.url = url
+        self.is_image = is_image
 
 
-def parse_inline(text: str, bold: bool = False, italic: bool = False, strike: bool = False, underline: bool = False, code: bool = False, url: str = None) -> list[TextSegment]:
+def parse_inline(text: str, bold: bool = False, italic: bool = False, strike: bool = False, underline: bool = False, code: bool = False, url: str = None, is_image: bool = False) -> list[TextSegment]:
     if not text:
         return []
 
     # List of (pattern, style_modifier_dict)
     # Ordered to match more specific/longer patterns first
     patterns = [
+        # Image: ![alt](url)
+        (re.compile(r'!\[([^\]]*?)\]\(([^)]*?)\)'), lambda m: {"url": m.group(2), "is_image": True}),
         # Link: [text](url)
         (re.compile(r'\[([^\]]*?)\]\(([^)]*?)\)'), lambda m: {"url": m.group(2)}),
         # Bold-Italic: ***text*** or ___text___
@@ -101,19 +106,20 @@ def parse_inline(text: str, bold: bool = False, italic: bool = False, strike: bo
         new_underline = underline or style_updates.get("underline", False)
         new_code = code or style_updates.get("code", False)
         new_url = url or style_updates.get("url", None)
+        new_is_image = is_image or style_updates.get("is_image", False)
 
         segments = []
         if prefix:
-            segments.extend(parse_inline(prefix, bold, italic, strike, underline, code, url))
+            segments.extend(parse_inline(prefix, bold, italic, strike, underline, code, url, is_image))
         
-        segments.extend(parse_inline(matched_text, new_bold, new_italic, new_strike, new_underline, new_code, new_url))
+        segments.extend(parse_inline(matched_text, new_bold, new_italic, new_strike, new_underline, new_code, new_url, new_is_image))
         
         if suffix:
-            segments.extend(parse_inline(suffix, bold, italic, strike, underline, code, url))
+            segments.extend(parse_inline(suffix, bold, italic, strike, underline, code, url, is_image))
         
         return segments
     else:
-        return [TextSegment(text, bold, italic, strike, underline, code, url)]
+        return [TextSegment(text, bold, italic, strike, underline, code, url, is_image)]
 
 
 def wrap_text_style(text: str, bold: bool = False, italic: bool = False, strike: bool = False, underline: bool = False, code: bool = False) -> str:
