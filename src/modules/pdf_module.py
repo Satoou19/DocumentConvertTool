@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 from src.core.base_module import BaseDocumentModule
 from src.core.registry import ModuleRegistry
 
@@ -237,11 +238,16 @@ class PDFModule(BaseDocumentModule):
                     if line_text:
                         # Prepend heading tags if the line has larger text size
                         if avg_size >= 20:
-                            line_text = f"# {line_text}"
+                            line_text = f"# {re.sub(r'\*{2,3}', '', line_text)}"
                         elif 16 <= avg_size < 20:
-                            line_text = f"## {line_text}"
+                            line_text = f"## {re.sub(r'\*{2,3}', '', line_text)}"
                         elif 12.5 <= avg_size < 16:
-                            line_text = f"### {line_text}"
+                            line_text = f"### {re.sub(r'\*{2,3}', '', line_text)}"
+                        else:
+                            # Repair broken/fragmented bold tags across accent characters
+                            for _ in range(3):
+                                line_text = re.sub(r'\*\*(.*?)\*\*([^\s\*]{1,3})\*\*(.*?)\*\*', r'**\1\2\3**', line_text)
+                                line_text = re.sub(r'\*\*(.*?)\*\*\s*\*\*(.*?)\*\*', r'**\1 \2**', line_text)
                             
                     line_texts.append(line_text)
                     
@@ -381,59 +387,149 @@ class PDFModule(BaseDocumentModule):
 
             from markdown_pdf import MarkdownPdf, Section
             
+            # Resolve system fonts directory for full Unicode Vietnamese font consistency
+            system_fonts_dir = "C:/Windows/Fonts" if os.path.exists("C:/Windows/Fonts") else "."
+            font_face_css = ""
+            font_family_name = "'Segoe UI', Arial, sans-serif"
+            
+            if os.path.exists(os.path.join(system_fonts_dir, "arial.ttf")):
+                font_face_css = """
+                @font-face {
+                    font-family: 'AppUnicodeFont';
+                    src: url('arial.ttf');
+                }
+                @font-face {
+                    font-family: 'AppUnicodeFont';
+                    font-weight: bold;
+                    src: url('arialbd.ttf');
+                }
+                @font-face {
+                    font-family: 'AppUnicodeFont';
+                    font-style: italic;
+                    src: url('ariali.ttf');
+                }
+                @font-face {
+                    font-family: 'AppUnicodeFont';
+                    font-weight: bold;
+                    font-style: italic;
+                    src: url('arialbi.ttf');
+                }
+                """
+                font_family_name = "'AppUnicodeFont', sans-serif"
+
             # CSS Stylesheet for professional layout matching the app's aesthetics
-            css = """
+            css = (font_face_css + """
             body {
-                font-family: 'Segoe UI', Arial, sans-serif;
-                line-height: 1.5;
-                color: #333333;
+                font-family: __FONT_FAMILY__;
+                font-size: 11pt;
+                line-height: 1.6;
+                color: #24292f;
+                margin: 0;
+                padding: 0;
             }
-            h1, h2, h3 {
-                color: #1a1a1a;
-                margin-top: 20px;
+            h1, h2, h3, h4, h5, h6 {
+                font-family: __FONT_FAMILY__;
+                color: #0f172a;
+                font-weight: bold;
+                margin-top: 1.4em;
+                margin-bottom: 0.6em;
+                line-height: 1.25;
+            }
+            h1 {
+                font-size: 20pt;
+                border-bottom: 1px solid #d0d7de;
+                padding-bottom: 0.3em;
+            }
+            h2 {
+                font-size: 16pt;
+                border-bottom: 1px solid #d0d7de;
+                padding-bottom: 0.2em;
+            }
+            h3 { font-size: 13pt; }
+            h4 { font-size: 11pt; }
+            p {
+                margin-top: 0;
                 margin-bottom: 10px;
             }
-            h1 { border-bottom: 1px solid #eaecef; padding-bottom: 5px; }
             table {
                 border-collapse: collapse;
                 width: 100%;
-                margin-top: 15px;
-                margin-bottom: 15px;
+                margin-top: 12px;
+                margin-bottom: 16px;
+                font-size: 10.5pt;
             }
             th, td {
-                border: 1px solid #cccccc;
-                padding: 8px 12px;
+                border: 1px solid #d0d7de;
+                padding: 7px 12px;
                 text-align: left;
+                vertical-align: top;
             }
             th {
                 background-color: #f6f8fa;
-                font-weight: bold;
+                font-weight: 600;
+                color: #1f2328;
             }
             tr:nth-child(even) {
-                background-color: #f9f9f9;
+                background-color: #fcfcfc;
             }
             code {
-                background-color: #f0f0f0;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 9.5pt;
+                background-color: #f6f8fa;
                 padding: 2px 6px;
-                font-family: 'Consolas', monospace;
-                font-size: 0.9em;
-                border-radius: 3px;
+                border-radius: 4px;
+                color: #24292f;
+            }
+            pre {
+                background-color: #f6f8fa;
+                border: 1px solid #d0d7de;
+                border-radius: 6px;
+                padding: 12px;
+                overflow-x: auto;
+                margin-top: 10px;
+                margin-bottom: 14px;
+            }
+            pre code {
+                background-color: transparent;
+                padding: 0;
+                border-radius: 0;
+            }
+            blockquote {
+                margin: 12px 0;
+                padding: 0 14px;
+                color: #57606a;
+                border-left: 4px solid #d0d7de;
+            }
+            ul, ol {
+                padding-left: 24px;
+                margin-top: 0;
+                margin-bottom: 12px;
+            }
+            li {
+                margin-bottom: 4px;
             }
             del {
                 text-decoration: line-through;
-                color: #6a737d;
+                color: #6e7781;
             }
             a {
-                color: #0366d6;
+                color: #0969da;
                 text-decoration: none;
             }
-            a:hover {
-                text-decoration: underline;
+            img {
+                max-width: 100%;
+                height: auto;
+                border-radius: 4px;
             }
-            """
+            hr {
+                border: 0;
+                border-top: 1px solid #d0d7de;
+                margin: 20px 0;
+            }
+            """).replace("__FONT_FAMILY__", font_family_name)
             
             pdf = MarkdownPdf(toc_level=2)
-            pdf.add_section(Section(html_content), user_css=css)
+            pdf.add_section(Section(html_content, root=system_fonts_dir), user_css=css)
             
             # Ensure output directory exists
             out_dir = os.path.dirname(out_path)
