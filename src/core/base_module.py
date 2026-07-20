@@ -23,7 +23,7 @@ class BaseDocumentModule(ABC):
         """Checks if all required dependencies are installed. Returns a list of missing dependencies."""
         missing = []
         for dep in self.required_dependencies:
-            import_name = "docx" if dep == "python-docx" else dep
+            import_name = "docx" if dep == "python-docx" else ("markdown_pdf" if dep == "markdown-pdf" else dep)
             try:
                 importlib.import_module(import_name)
             except ImportError:
