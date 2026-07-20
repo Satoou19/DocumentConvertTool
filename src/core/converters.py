@@ -2,7 +2,6 @@ import os
 import re
 
 def parse_md_tables(content: str) -> list:
-    import pandas as pd
     tables, lines, i = [], content.split("\n"), 0
     while i < len(lines):
         line = lines[i].strip()
@@ -24,8 +23,7 @@ def parse_md_tables(content: str) -> list:
             rows = [[c.strip() for c in l.split("|") if c.strip()] for l in data_lines]
             max_cols = max(len(r) for r in rows)
             rows = [r + [""] * (max_cols - len(r)) for r in rows]
-            df = pd.DataFrame(rows[1:], columns=rows[0])
-            tables.append((table_name, df))
+            tables.append((table_name, rows))
         else:
             i += 1
     return tables

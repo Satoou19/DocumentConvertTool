@@ -1,5 +1,4 @@
 import os
-import pandas as pd
 from src.core.base_module import BaseDocumentModule
 from src.core.registry import ModuleRegistry
 
@@ -14,7 +13,7 @@ class ExcelModule(BaseDocumentModule):
 
     @property
     def required_dependencies(self) -> list[str]:
-        return ["pandas", "openpyxl", "markitdown"]
+        return ["openpyxl", "markitdown"]
 
     def load_to_markdown(self, file_path: str) -> str:
         """Extracts Excel sheets into clean Markdown tables, preserving bold, italic, strike, underline, and hyperlinks."""
