@@ -9,6 +9,7 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
         self.style = None
         self._current_text = ""
         self.columnconfigure(0, weight=1)
+        self._resize_timer = None
         self.bind("<Configure>", self._on_configure, add="+")
         self._current_width = 400
 
@@ -20,9 +21,14 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
         self.update_preview(self._current_text)
 
     def _on_configure(self, event):
-        if abs(event.width - self._current_width) > 10:
+        if abs(event.width - self._current_width) > 15:
             self._current_width = event.width
-            self._update_wraplengths()
+            if self._resize_timer is not None:
+                try:
+                    self.after_cancel(self._resize_timer)
+                except Exception:
+                    pass
+            self._resize_timer = self.after(150, self._update_wraplengths)
 
     def _update_wraplengths(self):
         new_width = self._current_width - 45
