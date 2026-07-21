@@ -7,3 +7,4 @@ mammoth
 pyinstaller
 markitdown[pdf]
 markdown2
+markdown-pdf

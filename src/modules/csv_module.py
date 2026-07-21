@@ -1,5 +1,4 @@
 import os
-import pandas as pd
 from src.core.base_module import BaseDocumentModule
 from src.core.registry import ModuleRegistry
 
@@ -18,6 +17,7 @@ class CSVModule(BaseDocumentModule):
 
     def load_to_markdown(self, file_path: str) -> str:
         """Extracts CSV table into clean Markdown table."""
+        import pandas as pd
         # Read using utf-8-sig to preserve BOM and unicode text (e.g. Vietnamese)
         df = pd.read_csv(file_path, encoding="utf-8-sig", keep_default_na=False)
         if df.empty:

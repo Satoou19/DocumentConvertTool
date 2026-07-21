@@ -1,5 +1,4 @@
 import os
-import markdown2
 from src.core.base_module import BaseDocumentModule
 from src.core.registry import ModuleRegistry
 
@@ -34,6 +33,7 @@ class HTMLModule(BaseDocumentModule):
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
         """Converts Markdown text and saves it to a styled HTML document."""
         try:
+            import markdown2
             # Convert Markdown to HTML using markdown2 with extras
             # - "fenced-code-blocks" enables GitHub-like code formatting blocks
             # - "tables" enables rendering markdown tables

@@ -1,6 +1,5 @@
 import os
 import re
-import docx
 import zipfile
 from src.core.base_module import BaseDocumentModule
 from src.core.registry import ModuleRegistry
@@ -24,6 +23,7 @@ class WordModule(BaseDocumentModule):
             raise FileNotFoundError(f"File not found: {file_path}")
 
         try:
+            import docx
             from docx.oxml.text.paragraph import CT_P
             from docx.oxml.table import CT_Tbl
             from docx.text.paragraph import Paragraph
@@ -165,6 +165,7 @@ class WordModule(BaseDocumentModule):
 
     def save_from_markdown(self, markdown_content: str, out_path: str) -> str:
         """Converts Markdown text to formatted Word document."""
+        import docx
         from docx import Document
         from docx.shared import Pt, RGBColor
         from docx.oxml.ns import qn

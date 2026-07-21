@@ -14,7 +14,7 @@ class PDFModule(BaseDocumentModule):
 
     @property
     def required_dependencies(self) -> list[str]:
-        return ["markitdown", "pdfplumber"]
+        return ["markitdown", "pdfplumber", "markdown-pdf"]
 
     def load_to_markdown(self, file_path: str) -> str:
         """
