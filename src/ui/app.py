@@ -187,22 +187,22 @@ class App(BaseClass): # type: ignore
         super().__init__()
         self.title(f"Document Converter Workspace v{__version__}")
         
-        # Thiết lập kích thước cửa sổ phù hợp với nhiều loại màn hình (đặc biệt là laptop)
-        window_width = 1150
-        window_height = 680
+        # Thiết lập kích thước cửa sổ rộng rãi, phù hợp hơn cho các màn hình hiện đại
+        default_w = 1360
+        default_h = 800
         
         try:
             screen_width = self.winfo_screenwidth()
             screen_height = self.winfo_screenheight()
-            window_width = min(1150, max(850, screen_width - 40))
-            window_height = min(680, max(520, screen_height - 80))
+            window_width = min(default_w, max(950, screen_width - 60))
+            window_height = min(default_h, max(600, screen_height - 80))
             x = max(10, (screen_width - window_width) // 2)
             y = max(10, (screen_height - window_height) // 2)
             self.geometry(f"{window_width}x{window_height}+{x}+{y}")
         except Exception:
-            self.geometry("1150x680")
+            self.geometry(f"{default_w}x{default_h}")
             
-        self.minsize(840, 520)
+        self.minsize(900, 560)
         self.resizable(True, True)
         
         # Configure app-wide variables

@@ -1,7 +1,7 @@
 # Document Converter Workspace
 
-![Python](https://img.shields.io/badge/Python-3.12%20--%203.13-blue)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-green)
+![Python](<https://img.shields.io/badge/Python-3.12%20--%203.13-blue>)
+![Platform](<https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-green>)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 A modern desktop workspace for editing and converting documents between **Markdown**, **Excel**, and **Word** formats.
@@ -26,19 +26,16 @@ The application provides a unified Markdown-centric workflow, allowing users to 
   * Frozen header row
   * Auto-sized columns
   * Auto-filter support
-
 * **Markdown → Word (.docx)**
 
   * Heading support
   * Lists support
   * Bold text support
   * Table rendering
-
 * **Excel (.xlsx) → Markdown**
 
   * Multi-sheet extraction
   * Markdown table generation
-
 * **Word (.docx) → Markdown**
 
   * Clean document extraction
@@ -59,18 +56,36 @@ The application provides a unified Markdown-centric workflow, allowing users to 
 
 ## Supported Formats
 
-| Input          | Output              | Status      |
-| -------------- | ------------------- | ----------- |
-| Markdown (.md) | Excel (.xlsx)       | ✅ Available |
-| Markdown (.md) | Word (.docx)        | ✅ Available |
-| Excel (.xlsx)  | Markdown (.md)      | ✅ Available |
-| Word (.docx)   | Markdown (.md)      | ✅ Available |
-| CSV (.csv)     | Markdown (.md)      | ✅ Available |
-| Markdown (.md) | CSV (.csv)          | ✅ Available |
-| PDF (.pdf)     | Markdown (.md)      | ✅ Available |
-| Markdown (.md) | HTML (.html)        | ✅ Available |
-| HTML (.html)   | Markdown (.md)      | ✅ Available |
-| Markdown (.md) | PDF (.pdf)          | 🔄 Planning |
+The application uses **Markdown as a central interchange workspace**. You can import external documents into Markdown, edit them, and export them back to structured formats.
+
+```mermaid
+graph LR
+    subgraph Import [Import to Workspace]
+        Word_In[.docx] --> Hub((Markdown Hub))
+        Excel_In[.xlsx] --> Hub
+        CSV_In[.csv] --> Hub
+        PDF_In[.pdf] --> Hub
+        HTML_In[.html] --> Hub
+    end
+
+    subgraph Export [Export from Workspace]
+        Hub --> Word_Out[.docx]
+        Hub --> Excel_Out[.xlsx]
+        Hub --> CSV_Out[.csv]
+        Hub --> HTML_Out[.html]
+        Hub -.-> PDF_Out[.pdf v2.0]
+    end
+```
+
+### Conversion Matrix
+
+| Format | Import to Markdown (`➔ .md`) | Export from Markdown (`.md ➔`) | Mode | Status |
+| :--- | :---: | :---: | :---: | :---: |
+| **Word Document (`.docx`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
+| **Excel Spreadsheet (`.xlsx`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
+| **CSV File (`.csv`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
+| **HTML Page (`.html`, `.htm`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
+| **PDF Document (`.pdf`)** | ✅ | 🔄 Planned (v2.0) | ➔ Import Only | ⚡ Active |
 
 ---
 
@@ -93,6 +108,7 @@ cd DocumentConvertTool
 Create, activate virtual environment, install dependencies, and run:
 
 ### Windows (PowerShell)
+
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
@@ -101,6 +117,7 @@ python run.py
 ```
 
 ### macOS / Linux
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -209,37 +226,37 @@ DocumentConvertTool/
 
 ### Directory Overview
 
-| Path                     | Purpose                              |
-| ------------------------ | ------------------------------------ |
-| `src/__version__.py`     | SemVer version config                |
-| `src/main.py`            | Application entry point & initialization |
-| `src/core/base_module.py`| Base abstract document module        |
-| `src/core/registry.py`   | Document module registry             |
-| `src/core/converters.py` | Markdown parsing utilities           |
-| `src/core/validator.py`  | Document structure validation        |
-| `src/modules/`           | Document conversion plugins (Word, Excel, CSV, PDF, HTML) |
-| `src/services/`          | Core conversion background services  |
-| `src/ui/app.py`          | Main customtkinter GUI (responsive, debounce resize) |
+| Path                           | Purpose                                                      |
+| ------------------------------ | ------------------------------------------------------------ |
+| `src/__version__.py`         | SemVer version config                                        |
+| `src/main.py`                | Application entry point & initialization                     |
+| `src/core/base_module.py`    | Base abstract document module                                |
+| `src/core/registry.py`       | Document module registry                                     |
+| `src/core/converters.py`     | Markdown parsing utilities                                   |
+| `src/core/validator.py`      | Document structure validation                                |
+| `src/modules/`               | Document conversion plugins (Word, Excel, CSV, PDF, HTML)    |
+| `src/services/`              | Core conversion background services                          |
+| `src/ui/app.py`              | Main customtkinter GUI (responsive, debounce resize)         |
 | `src/ui/document_preview.py` | Visual Markdown document preview panel (debounce wraplength) |
-| `src/ui/theme.json`      | App CustomTkinter theme settings     |
-| `src/utils/env.py`       | UTF-8 encoding, Tcl/Tk path & High-DPI configuration |
-| `Document Converter.spec`| Optimized PyInstaller build spec     |
-| `run.py`                 | Launcher script                      |
+| `src/ui/theme.json`          | App CustomTkinter theme settings                             |
+| `src/utils/env.py`           | UTF-8 encoding, Tcl/Tk path & High-DPI configuration         |
+| `Document Converter.spec`    | Optimized PyInstaller build spec                             |
+| `run.py`                     | Launcher script                                              |
 
 ---
 
 ## Dependencies
 
-| Library       | Purpose                  |
-| ------------- | ------------------------ |
-| customtkinter | Modern UI framework      |
-| tkinterdnd2   | Drag & drop support      |
-| pandas        | Data processing          |
-| openpyxl      | Excel export/import      |
-| python-docx   | Word document generation |
-| mammoth       | Word document extraction |
-| markdown2     | Markdown → HTML conversion |
-| pdfplumber    | PDF layout table extraction |
+| Library       | Purpose                      |
+| ------------- | ---------------------------- |
+| customtkinter | Modern UI framework          |
+| tkinterdnd2   | Drag & drop support          |
+| pandas        | Data processing              |
+| openpyxl      | Excel export/import          |
+| python-docx   | Word document generation     |
+| mammoth       | Word document extraction     |
+| markdown2     | Markdown → HTML conversion  |
+| pdfplumber    | PDF layout table extraction  |
 | markitdown    | Fallback PDF text extraction |
 
 ---
@@ -248,51 +265,60 @@ DocumentConvertTool/
 
 ### ✅ P0 — Stabilization (Completed)
 
-* [x] Fix drag & drop path parser
-* [x] File extension validation
-* [x] Overwrite confirmation
-* [x] Dependency fallback handling
-* [x] File size warning
-* [x] Progress indicator
-* [x] Unsaved changes warning
-* [x] Word → Markdown: images replaced with [image] placeholder
+* [X] Fix drag & drop path parser
+* [X] File extension validation
+* [X] Overwrite confirmation
+* [X] Dependency fallback handling
+* [X] File size warning
+* [X] Progress indicator
+* [X] Unsaved changes warning
+* [X] Word → Markdown: images replaced with [image] placeholder
 
 ### ✅ Phase 1 — UX & Format Improvements (Completed)
 
-* [x] CSV ↔ Markdown support
-* [x] Smart table validator (pipe escaping, table detection)
-* [x] Search & replace panel (integrated into editor)
-* [x] Formatting toolbar in editor (Bold, Italic, Strikethrough, Underline, Code, Link, Headings, Lists, Tables)
-* [x] Autosave draft (restore when reopening app)
+* [X] CSV ↔ Markdown support
+* [X] Smart table validator (pipe escaping, table detection)
+* [X] Search & replace panel (integrated into editor)
+* [X] Formatting toolbar in editor (Bold, Italic, Strikethrough, Underline, Code, Link, Headings, Lists, Tables)
+* [X] Autosave draft (restore when reopening app)
 * [ ] Markdown syntax highlighting (in the raw text editor)
 
 ### 🔄 Phase 2 — Format Expansion
 
-* [x] PDF → Markdown (using pdfplumber + markitdown layout extraction, preserving tables and fonts)
-* [x] HTML ↔ Markdown (HTML export with GitHub Markdown CSS styling & import fallback)
-* [x] Visual document preview in editor (renders formatting, tables, lists in-app)
-* [ ] Markdown → PDF (weasyprint)
+* [X] PDF → Markdown (using pdfplumber + markitdown layout extraction, preserving tables, fonts, bullets, and list numbering)
+* [X] HTML ↔ Markdown (HTML export with GitHub Markdown CSS styling & import fallback)
+* [X] Visual document preview in editor (renders formatting, tables, lists in-app)
+* [ ] Markdown → PDF (with embedded image & table rendering)
 
 ### 🔄 Phase 3 — Polish & Release
 
-* [x] Resizable window support (adapts to varying screen sizes)
-* [x] Responsive UI (auto-compact labels, 2-row toolbar at narrow widths)
-* [x] High-DPI awareness (Per-Monitor v2 on Windows)
-* [x] Optimized PyInstaller build via `.spec` file (excludes unused heavy packages)
-* [x] Debounce resize events for smooth window dragging (150ms `after()` timer)
-* [ ] Batch conversion
-* [ ] Multi-document tabs
-* [ ] Conversion presets (save frequently-used conversion configs)
-* [x] v1.2.1 executable release (PyInstaller packaging with resource bundles)
+* [X] Resizable window support (adapts to varying screen sizes)
+* [X] Responsive UI (auto-compact labels, 2-row toolbar at narrow widths)
+* [X] High-DPI awareness (Per-Monitor v2 on Windows)
+* [X] Optimized PyInstaller build via `.spec` file (excludes unused heavy packages)
+* [X] Debounce resize events for smooth window dragging (150ms `after()` timer)
+* [X] v1.2.1 executable release (PyInstaller packaging with resource bundles)
+
+### 🔄 Phase 4–8 — v2.0 Roadmap (Planned)
+
+* [ ] Two-Way Image Pipeline (`MediaAssetManager`, Word/PDF/HTML 2-way image import & export)
+* [ ] Multi-document tabs & global keyboard shortcuts
+* [ ] Markdown syntax highlighting in editor
+* [ ] Batch conversion & ZIP archive auto-extract/repack (`zipfile`)
+* [ ] GitHub Markdown CSS Theme Engine for HTML & PDF exports (with PDF engine POC)
+* [ ] Persistent Settings panel & conversion presets
+* [ ] Command-Line Interface (CLI mode)
+* [ ] Interactive User Guide Window Upgrade (`MD Guide ❔` with 6 detailed tabs)
+* [ ] Optimized `Document Converter.spec` build & Windows Setup Installer (`DocumentConverter_Setup_v2.0.0.exe` via Inno Setup)
 
 ---
 
 ## Known Limitations
 
 * **Large files:** File preview is truncated at 500KB to prevent UI lag. Full content will still be converted.
-* **Word documents with images:** Images are replaced with `[image]` placeholder text since inline image handling in Markdown is limited.
+* **Word documents with images:** In v1.2.x, images are replaced with `[image]` placeholders. Full two-way image extraction and embedding (Word, PDF, HTML export) is planned for v2.0 (Phase 4).
 * **Complex Word formatting:** Some advanced Word styles (columns, text boxes, etc.) may not be fully preserved in Markdown conversion.
-* **PDF support:** PDF import (v1.1.0+) supports layout-preserving extraction with page-break table stitching and cell continuation. Exporting Markdown to PDF is not yet supported.
+* **PDF support:** PDF import (v1.1.0+) supports layout-preserving extraction with page-break table stitching and cell continuation. Exporting Markdown to PDF is planned for v2.0 (Phase 6).
 * **CSV support:** CSV ↔ Markdown conversion is fully supported.
 * **Resize smoothness:** CustomTkinter redraws rounded-corner canvas polygons on every frame resize. Inner frames use reduced `corner_radius` (4px vs 12px) to minimize redraw cost. Some minor visual stutter may persist on complex layouts — this is a framework-level limitation of CustomTkinter.
 

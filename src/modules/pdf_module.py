@@ -167,13 +167,50 @@ class PDFModule(BaseDocumentModule):
                         current_top = top
                 if current_line:
                     lines.append(current_line)
-                    
-                line_texts = []
+                
+                # Determine minimum left x0 coordinate across non-empty lines
+                valid_lines_x0 = [l[0]["x0"] for l in lines if l and any(c.get("text", "").strip() for c in l)]
+                min_x0 = min(valid_lines_x0) if valid_lines_x0 else 0
+
+                import re
+                UNICODE_BULLET_SET = r"[\u2022\u2043\u25e6\u25fe\u25aa\u25ab\u25cf\u25cb\u25c6\u25c7\u27a2\u25ba\u25b8\uf0b7\uf0a7\uf0a8\uf0d8\uf0be\uf0fc\uf076\uf0d1\uf0de\uf02d\u25a0\u25a1•⁃◦▪▫●○◆◇➢►▸ï‚·]"
+                BULLET_PREFIX_RE = re.compile(rf"^(\*{{1,3}}|_{{1,3}})?\s*(?:{UNICODE_BULLET_SET}\s*|[–—]\s+|[-\*\+]\s+)(\1)?\s*")
+                ORDERED_PREFIX_RE = re.compile(r"^(\*{{1,3}}|_{{1,3}})?\s*(?:\(?(\d+|[a-zA-Z]|[ivxlcdmIVXLCDM]+)[\.\)]|\d+(?:\.\d+)+\.?)\s*(\1)?\s*")
+
+                def strip_bullet_prefix(text):
+                    m = BULLET_PREFIX_RE.match(text)
+                    if m:
+                        return text[m.end():]
+                    return text
+
+                def strip_ordered_prefix(text):
+                    m = ORDERED_PREFIX_RE.match(text)
+                    if m:
+                        p_val = m.group(2)
+                        if is_valid_ordered_prefix(p_val):
+                            return p_val, text[m.end():]
+                    return None, text
+
+                def is_valid_ordered_prefix(prefix_val):
+                    if not prefix_val:
+                        return False
+                    if prefix_val.isdigit():
+                        return int(prefix_val) < 100
+                    p = prefix_val.lower()
+                    if len(p) == 1 and p.isalpha():
+                        return True
+                    valid_roman = {"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
+                                   "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii", "xix", "xx"}
+                    return p in valid_roman
+
+                line_items_temp = []
+                bullet_x0_list = []
+
                 for line in lines:
-                    # Sort characters on the line from left to right
                     line.sort(key=lambda c: c["x0"])
+                    line_x0 = line[0]["x0"] if line else min_x0
+                    line_top = line[0]["top"] if line else 0
                     
-                    # Merge characters into runs that share the same font properties
                     runs = []
                     current_run_text = ""
                     current_font = None
@@ -184,7 +221,6 @@ class PDFModule(BaseDocumentModule):
                         font = char.get("fontname", "").lower()
                         bold = "bold" in font
                         italic = "italic" in font or "oblique" in font
-                        
                         size = char.get("size", 10)
                         total_size += size
                         char_count += 1
@@ -194,7 +230,6 @@ class PDFModule(BaseDocumentModule):
                             current_font = style_key
                             current_run_text = char["text"]
                         elif style_key == current_font:
-                            # Check distance to previous character to insert spaces
                             last_char = line[line.index(char) - 1]
                             gap = char["x0"] - last_char["x1"]
                             char_width = char["x1"] - char["x0"]
@@ -208,10 +243,8 @@ class PDFModule(BaseDocumentModule):
                     if current_run_text:
                         runs.append((current_run_text, current_font))
                         
-                    # Calculate average line size for heading detection
                     avg_size = total_size / char_count if char_count > 0 else 10
                     
-                    # Format runs into markdown syntax
                     formatted_runs = []
                     for text, (bold, italic) in runs:
                         stripped = text.strip()
@@ -232,19 +265,105 @@ class PDFModule(BaseDocumentModule):
                             
                         formatted_runs.append(f"{leading_spaces}{val}{trailing_spaces}")
                         
-                    line_text = "".join(formatted_runs).strip()
+                    raw_line_text = "".join(formatted_runs).strip()
+                    if not raw_line_text:
+                        continue
+
+                    is_heading = avg_size >= 12.5
+                    is_bullet = False
+                    is_ordered = False
+                    cleaned_text = raw_line_text
+                    prefix_val = None
+
+                    if not is_heading:
+                        if BULLET_PREFIX_RE.match(raw_line_text):
+                            is_bullet = True
+                            cleaned_text = strip_bullet_prefix(raw_line_text)
+                            bullet_x0_list.append(line_x0)
+                        else:
+                            p_val, c_text = strip_ordered_prefix(raw_line_text)
+                            if p_val and (not p_val.isdigit() or int(p_val) < 1000):
+                                is_ordered = True
+                                prefix_val = p_val
+                                cleaned_text = c_text
+                                bullet_x0_list.append(line_x0)
+
+                    line_items_temp.append({
+                        "raw": raw_line_text,
+                        "cleaned": cleaned_text,
+                        "prefix_val": prefix_val,
+                        "top": line_top,
+                        "x0": line_x0,
+                        "size": avg_size,
+                        "is_heading": is_heading,
+                        "is_bullet": is_bullet,
+                        "is_ordered": is_ordered,
+                        "is_list_item": is_bullet or is_ordered
+                    })
+
+                min_bullet_x0 = min(bullet_x0_list) if bullet_x0_list else min_x0
+
+                line_items = []
+                for item in line_items_temp:
+                    delta_x = item["x0"] - min_bullet_x0
+                    if delta_x < 12:
+                        indent = ""
+                    elif 12 <= delta_x < 28:
+                        indent = "  "
+                    elif 28 <= delta_x < 44:
+                        indent = "    "
+                    else:
+                        indent = "      "
+
+                    normalized_text = item["raw"]
+                    if item["is_bullet"]:
+                        normalized_text = f"{indent}- {item['cleaned']}"
+                    elif item["is_ordered"]:
+                        normalized_text = f"{indent}{item['prefix_val']}. {item['cleaned']}"
+                    elif item["is_heading"]:
+                        if item["size"] >= 20:
+                            normalized_text = f"# {item['raw']}"
+                        elif 16 <= item["size"] < 20:
+                            normalized_text = f"## {item['raw']}"
+                        elif 12.5 <= item["size"] < 16:
+                            normalized_text = f"### {item['raw']}"
+
+                    item["text"] = normalized_text
+                    line_items.append(item)
+
+                # Combine wrapped continuation lines for list items and paragraphs
+                line_texts = []
+                for idx, item in enumerate(line_items):
+                    if not line_texts:
+                        line_texts.append(item["text"])
+                        continue
                     
-                    if line_text:
-                        # Prepend heading tags if the line has larger text size
-                        if avg_size >= 20:
-                            line_text = f"# {line_text}"
-                        elif 16 <= avg_size < 20:
-                            line_text = f"## {line_text}"
-                        elif 12.5 <= avg_size < 16:
-                            line_text = f"### {line_text}"
-                            
-                    line_texts.append(line_text)
+                    prev_item = line_items[idx - 1]
+                    gap_y = item["top"] - prev_item["top"]
+                    normal_gap = prev_item["size"] * 1.8
                     
+                    # Check if current item is a genuine continuation line of the previous list item
+                    is_continuation = (
+                        prev_item["is_list_item"] and 
+                        not item["is_list_item"] and 
+                        not item["is_heading"] and 
+                        gap_y <= normal_gap and 
+                        item["x0"] > min_x0 + 10 and
+                        item["x0"] >= prev_item["x0"]
+                    )
+
+                    if is_continuation:
+                        if prev_item["is_list_item"] and not prev_item["cleaned"].strip():
+                            # Standalone bullet symbol on its own line: merge cleanly with 1 space
+                            line_texts[-1] = line_texts[-1].rstrip() + " " + item["raw"].lstrip()
+                        else:
+                            line_texts[-1] += " " + item["raw"].strip()
+                    else:
+                        # If transitioning from a list block to a non-list paragraph/sub-heading, insert a blank line separator
+                        if prev_item["is_list_item"] and not item["is_list_item"] and not item["is_heading"]:
+                            line_texts.append("")
+                        line_texts.append(item["text"])
+
                 return "\n".join(line_texts)
 
             doc_elements = []
