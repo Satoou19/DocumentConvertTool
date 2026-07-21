@@ -51,6 +51,8 @@ The application provides a unified Markdown-centric workflow, allowing users to 
 * Live content extraction on load
 * One-click document opening
 * Background-thread conversion pipeline
+* Responsive UI (auto-compact labels, 2-row toolbar, debounce resize)
+* High-DPI aware (Per-Monitor v2 on Windows)
 * Cross-platform support
 
 ---
@@ -64,9 +66,10 @@ The application provides a unified Markdown-centric workflow, allowing users to 
 | Excel (.xlsx)  | Markdown (.md)      | ✅ Available |
 | Word (.docx)   | Markdown (.md)      | ✅ Available |
 | CSV (.csv)     | Markdown (.md)      | ✅ Available |
-| Markdown (.md) | CSV (.csv)          | 🔄 Planning |
+| Markdown (.md) | CSV (.csv)          | ✅ Available |
 | PDF (.pdf)     | Markdown (.md)      | ✅ Available |
-| Markdown (.md) | HTML (.html)        | 🔄 Planning |
+| Markdown (.md) | HTML (.html)        | ✅ Available |
+| HTML (.html)   | Markdown (.md)      | ✅ Available |
 | Markdown (.md) | PDF (.pdf)          | 🔄 Planning |
 
 ---
@@ -128,22 +131,30 @@ The application supports drag-and-drop input files.
 pip install pyinstaller
 ```
 
-### Windows
+### Windows (Recommended — using optimized .spec file)
+
+```powershell
+venv\Scripts\pyinstaller "Document Converter.spec"
+```
+
+> The `.spec` file excludes heavy unused packages (`onnxruntime`, `cryptography`, `matplotlib`, `scipy`, etc.) for faster build times.
+
+### Windows (Manual — generates a new .spec from scratch)
 
 ```cmd
-pyinstaller --onefile --windowed --name "Document Converter" --icon=favicon.ico run.py
+pyinstaller --onefile --windowed --name "Document Converter" --icon=favicon.ico --collect-all customtkinter --collect-all tkinterdnd2 --add-data "src/ui/theme.json;src/ui" run.py
 ```
 
 ### macOS
 
 ```bash
-pyinstaller --onefile --windowed --name "Document Converter" run.py
+pyinstaller --onefile --windowed --name "Document Converter" --collect-all customtkinter --collect-all tkinterdnd2 --add-data "src/ui/theme.json:src/ui" run.py
 ```
 
 ### Linux
 
 ```bash
-pyinstaller --onefile --name "Document Converter" run.py
+pyinstaller --onefile --name "Document Converter" --collect-all customtkinter --collect-all tkinterdnd2 --add-data "src/ui/theme.json:src/ui" run.py
 ```
 
 Build output:
@@ -173,6 +184,7 @@ DocumentConvertTool/
 │   │   ├── __init__.py
 │   │   ├── csv_module.py
 │   │   ├── excel_module.py
+│   │   ├── html_module.py
 │   │   ├── pdf_module.py
 │   │   └── word_module.py
 │   │
@@ -182,6 +194,7 @@ DocumentConvertTool/
 │   │
 │   ├── ui/
 │   │   ├── app.py
+│   │   ├── document_preview.py
 │   │   └── theme.json
 │   │
 │   └── utils/
@@ -189,6 +202,8 @@ DocumentConvertTool/
 │
 ├── run.py
 ├── requirements.txt
+├── favicon.ico
+├── Document Converter.spec
 └── README.md
 ```
 
@@ -202,11 +217,13 @@ DocumentConvertTool/
 | `src/core/registry.py`   | Document module registry             |
 | `src/core/converters.py` | Markdown parsing utilities           |
 | `src/core/validator.py`  | Document structure validation        |
-| `src/modules/`           | Document conversion plugins (Word, Excel, CSV, PDF) |
+| `src/modules/`           | Document conversion plugins (Word, Excel, CSV, PDF, HTML) |
 | `src/services/`          | Core conversion background services  |
-| `src/ui/app.py`          | Main customtkinter GUI               |
+| `src/ui/app.py`          | Main customtkinter GUI (responsive, debounce resize) |
+| `src/ui/document_preview.py` | Visual Markdown document preview panel (debounce wraplength) |
 | `src/ui/theme.json`      | App CustomTkinter theme settings     |
-| `src/utils/env.py`       | UTF-8 encoding & Tcl/Tk path configuration |
+| `src/utils/env.py`       | UTF-8 encoding, Tcl/Tk path & High-DPI configuration |
+| `Document Converter.spec`| Optimized PyInstaller build spec     |
 | `run.py`                 | Launcher script                      |
 
 ---
@@ -240,28 +257,33 @@ DocumentConvertTool/
 * [x] Unsaved changes warning
 * [x] Word → Markdown: images replaced with [image] placeholder
 
-### Phase 1 — UX & Format Improvements (Completed)
+### ✅ Phase 1 — UX & Format Improvements (Completed)
 
 * [x] CSV ↔ Markdown support
 * [x] Smart table validator (pipe escaping, table detection)
 * [x] Search & replace panel (integrated into editor)
-* [ ] Markdown syntax highlighting
-* [ ] Autosave draft (restore when reopening app)
+* [x] Formatting toolbar in editor (Bold, Italic, Strikethrough, Underline, Code, Link, Headings, Lists, Tables)
+* [x] Autosave draft (restore when reopening app)
+* [ ] Markdown syntax highlighting (in the raw text editor)
 
-### Phase 2 — Format Expansion
+### 🔄 Phase 2 — Format Expansion
 
-* [x] PDF → Markdown (using pdfplumber + markitdown layout extraction)
-* [ ] HTML export (with GitHub Markdown CSS styling)
-* [ ] HTML preview in editor
+* [x] PDF → Markdown (using pdfplumber + markitdown layout extraction, preserving tables and fonts)
+* [x] HTML ↔ Markdown (HTML export with GitHub Markdown CSS styling & import fallback)
+* [x] Visual document preview in editor (renders formatting, tables, lists in-app)
 * [ ] Markdown → PDF (weasyprint)
 
-### Phase 3 — Polish & Release
+### 🔄 Phase 3 — Polish & Release
 
+* [x] Resizable window support (adapts to varying screen sizes)
+* [x] Responsive UI (auto-compact labels, 2-row toolbar at narrow widths)
+* [x] High-DPI awareness (Per-Monitor v2 on Windows)
+* [x] Optimized PyInstaller build via `.spec` file (excludes unused heavy packages)
+* [x] Debounce resize events for smooth window dragging (150ms `after()` timer)
 * [ ] Batch conversion
-* [ ] Resizable window
 * [ ] Multi-document tabs
 * [ ] Conversion presets (save frequently-used conversion configs)
-* [x] v1.1.0 executable release (PyInstaller)
+* [x] v1.2.1 executable release (PyInstaller packaging with resource bundles)
 
 ---
 
@@ -270,8 +292,9 @@ DocumentConvertTool/
 * **Large files:** File preview is truncated at 500KB to prevent UI lag. Full content will still be converted.
 * **Word documents with images:** Images are replaced with `[image]` placeholder text since inline image handling in Markdown is limited.
 * **Complex Word formatting:** Some advanced Word styles (columns, text boxes, etc.) may not be fully preserved in Markdown conversion.
-* **PDF support:** PDF import (v1.1.0) supports layout-preserving extraction with page-break table stitching and cell continuation. Exporting Markdown to PDF is not yet supported.
+* **PDF support:** PDF import (v1.1.0+) supports layout-preserving extraction with page-break table stitching and cell continuation. Exporting Markdown to PDF is not yet supported.
 * **CSV support:** CSV ↔ Markdown conversion is fully supported.
+* **Resize smoothness:** CustomTkinter redraws rounded-corner canvas polygons on every frame resize. Inner frames use reduced `corner_radius` (4px vs 12px) to minimize redraw cost. Some minor visual stutter may persist on complex layouts — this is a framework-level limitation of CustomTkinter.
 
 ---
 
