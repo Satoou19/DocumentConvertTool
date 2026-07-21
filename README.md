@@ -12,8 +12,8 @@ The application provides a unified Markdown-centric workflow, allowing users to 
 
 ## Screenshots & Themes
 
-| Dark Mode (Violet Cyberpunk) | Light Mode (Light Theme) |
-| :---: | :---: |
+| Dark Mode (Violet Cyberpunk) |      Light Mode (Light Theme)      |
+| :--------------------------: | :---------------------------------: |
 | ![Dark Mode](screenshot.png) | ![Light Mode](screenshot_light.png) |
 
 ---
@@ -81,13 +81,13 @@ graph LR
 
 ### Conversion Matrix
 
-| Format | Import to Markdown (`➔ .md`) | Export from Markdown (`.md ➔`) | Mode | Status |
-| :--- | :---: | :---: | :---: | :---: |
-| **Word Document (`.docx`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
-| **Excel Spreadsheet (`.xlsx`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
-| **CSV File (`.csv`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
-| **HTML Page (`.html`, `.htm`)** | ✅ | ✅ | ↔ Two-Way | ✅ Ready |
-| **PDF Document (`.pdf`)** | ✅ | 🔄 Planned (v2.0) | ➔ Import Only | ⚡ Active |
+| Format                                    | Import to Markdown (`➔ .md`) | Export from Markdown (`.md ➔`) |      Mode      |  Status  |
+| :---------------------------------------- | :-----------------------------: | :-------------------------------: | :------------: | :-------: |
+| **Word Document (`.docx`)**       |               ✅               |                ✅                |   ↔ Two-Way   | ✅ Ready |
+| **Excel Spreadsheet (`.xlsx`)**   |               ✅               |                ✅                |   ↔ Two-Way   | ✅ Ready |
+| **CSV File (`.csv`)**             |               ✅               |                ✅                |   ↔ Two-Way   | ✅ Ready |
+| **HTML Page (`.html`, `.htm`)** |               ✅               |                ✅                |   ↔ Two-Way   | ✅ Ready |
+| **PDF Document (`.pdf`)**         |               ✅               |         🔄 Planned (v2.0)         | ➔ Import Only | ⚡ Active |
 
 ---
 
