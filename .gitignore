@@ -1,6 +1,7 @@
 build/
 dist/
-*.spec
+# Keep PyInstaller spec file for optimized builds
+!Document Converter.spec
 __pycache__/
 *.pyc
 .env
