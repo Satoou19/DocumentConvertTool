@@ -10,9 +10,11 @@ The application provides a unified Markdown-centric workflow, allowing users to 
 
 ---
 
-## Screenshot
+## Screenshots & Themes
 
-![Application Screenshot](screenshot.png)
+| Dark Mode (Violet Cyberpunk) | Light Mode (Light Theme) |
+| :---: | :---: |
+| ![Dark Mode](screenshot.png) | ![Light Mode](screenshot_light.png) |
 
 ---
 
