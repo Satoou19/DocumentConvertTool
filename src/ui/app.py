@@ -187,21 +187,22 @@ class App(BaseClass): # type: ignore
         super().__init__()
         self.title(f"Document Converter Workspace v{__version__}")
         
-        # Thiết lập kích thước cửa sổ phù hợp với nhiều loại màn hình (đặc biệt là laptop)
-        window_width = 1150
-        window_height = 680
+        # Thiết lập kích thước cửa sổ rộng rãi, phù hợp hơn cho các màn hình hiện đại
+        default_w = 1360
+        default_h = 800
         
         try:
             screen_width = self.winfo_screenwidth()
             screen_height = self.winfo_screenheight()
-            x = (screen_width - window_width) // 2
-            y = (screen_height - window_height) // 2
-            # Đảm bảo y không bị âm và nhấc lên một chút để tránh taskbar
-            y = max(y - 20, 15)
+            window_width = min(default_w, max(950, screen_width - 60))
+            window_height = min(default_h, max(600, screen_height - 80))
+            x = max(10, (screen_width - window_width) // 2)
+            y = max(10, (screen_height - window_height) // 2)
             self.geometry(f"{window_width}x{window_height}+{x}+{y}")
         except Exception:
-            self.geometry(f"{window_width}x{window_height}")
+            self.geometry(f"{default_w}x{default_h}")
             
+        self.minsize(900, 560)
         self.resizable(True, True)
         
         # Configure app-wide variables
@@ -217,6 +218,7 @@ class App(BaseClass): # type: ignore
         self._badge_timer_id = None
         self._toast_timer_id = None
         self._preview_timer = None
+        self._current_widget_scale = 1.0
         
         self._block_update_dimensions = False
         
@@ -259,21 +261,9 @@ class App(BaseClass): # type: ignore
         self.header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
         self.header_frame.grid_propagate(False)
         
-        title_lbl = ctk.CTkLabel(
-            self.header_frame, text=f"Document Converter Workspace v{__version__}",
-            font=ctk.CTkFont(family=STYLE["font_family_title"], size=20, weight="bold"), text_color=STYLE["text_primary"]
-        )
-        title_lbl.pack(side="left", padx=25, pady=10)
-        
-        subtitle_lbl = ctk.CTkLabel(
-            self.header_frame, text="Multipurpose document editing and conversion workspace",
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=13, slant="italic"), text_color=STYLE["text_muted"]
-        )
-        subtitle_lbl.pack(side="left", padx=10, pady=16)
-
-        # Theme controls frame on the right side of the header
+        # Theme controls frame packed FIRST on right side so it never disappears on resize
         theme_ctrl_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent", border_width=0)
-        theme_ctrl_frame.pack(side="right", padx=25, pady=10)
+        theme_ctrl_frame.pack(side="right", padx=15, pady=10)
         
         # Color Palette Dropdown
         palette_lbl = ctk.CTkLabel(
@@ -281,13 +271,13 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
             text_color=STYLE["text_muted"]
         )
-        palette_lbl.pack(side="left", padx=(0, 5))
+        palette_lbl.pack(side="left", padx=(0, 4))
         
         self.palette_menu = ctk.CTkOptionMenu(
             theme_ctrl_frame, 
             values=list(PALETTES.keys()), 
             variable=self.current_palette_var,
-            width=140, height=28,
+            width=130, height=28,
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
             fg_color=STYLE["btn_utility_fg"],
             button_color=STYLE["btn_utility_fg"],
@@ -295,7 +285,7 @@ class App(BaseClass): # type: ignore
             text_color=STYLE["text_primary"],
             command=self._change_palette
         )
-        self.palette_menu.pack(side="left", padx=(0, 15))
+        self.palette_menu.pack(side="left", padx=(0, 10))
         
         # Appearance Mode Dropdown
         mode_lbl = ctk.CTkLabel(
@@ -303,13 +293,13 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
             text_color=STYLE["text_muted"]
         )
-        mode_lbl.pack(side="left", padx=(0, 5))
+        mode_lbl.pack(side="left", padx=(0, 4))
         
         self.appearance_menu = ctk.CTkOptionMenu(
             theme_ctrl_frame, 
             values=["Dark", "Light", "System"], 
             variable=self.appearance_mode_var,
-            width=90, height=28,
+            width=85, height=28,
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
             fg_color=STYLE["btn_utility_fg"],
             button_color=STYLE["btn_utility_fg"],
@@ -318,6 +308,22 @@ class App(BaseClass): # type: ignore
             command=self._change_appearance_mode
         )
         self.appearance_menu.pack(side="left")
+
+        # App Title & Subtitle packed on left
+        self.title_lbl = ctk.CTkLabel(
+            self.header_frame, text=f"Document Converter Workspace v{__version__}",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=18, weight="bold"), text_color=STYLE["text_primary"]
+        )
+        self.title_lbl.pack(side="left", padx=(15, 5), pady=10)
+        
+        self.subtitle_lbl = ctk.CTkLabel(
+            self.header_frame, text="Multipurpose document editing & conversion",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, slant="italic"), text_color=STYLE["text_muted"]
+        )
+        self.subtitle_lbl.pack(side="left", padx=5, pady=16)
+
+        # Bind resize event to dynamically manage header subtitle visibility
+        self.bind("<Configure>", self._on_window_configure)
 
         # Thin border separator line below the header
         self.separator = ctk.CTkFrame(self, fg_color=STYLE["btn_utility_border"], height=1, corner_radius=0, border_width=0)
@@ -381,18 +387,34 @@ class App(BaseClass): # type: ignore
         self.left_pane.rowconfigure(5, weight=0) # Footer stats
         self.left_pane.columnconfigure(0, weight=1)
 
+        # Left Pane Header row (Title & Syntax Guide button)
+        header_left = ctk.CTkFrame(self.left_pane, fg_color="transparent", border_width=0)
+        header_left.grid(row=0, column=0, sticky="ew", padx=15, pady=(12, 5))
+
         self.editor_title = ctk.CTkLabel(
-            self.left_pane, text="INPUT EDITOR & OVERVIEW (MARKDOWN / TEXT)",
+            header_left, text="INPUT EDITOR & OVERVIEW (MARKDOWN / TEXT)",
             font=ctk.CTkFont(family=STYLE["font_family_title"], size=12, weight="bold"), 
             text_color=STYLE["text_primary"]
         )
-        self.editor_title.grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
+        self.editor_title.pack(side="left")
+
+        self.btn_md_guide = ctk.CTkButton(
+            header_left, text="MD Guide ❔", width=80, height=22, 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+            command=self._show_md_guide
+        )
+        self.btn_md_guide.pack(side="right")
 
         # File Load Area / Drag Zone (with subtle border for drag enter/leave highlights)
         self.load_bar = ctk.CTkFrame(
             self.left_pane, 
             fg_color=STYLE["btn_utility_fg"], 
-            corner_radius=8, 
+            corner_radius=4, 
             height=45, 
             border_width=1, 
             border_color=STYLE["btn_utility_border"]
@@ -421,37 +443,56 @@ class App(BaseClass): # type: ignore
 
 
 
-        # The Formatting Toolbar (Word / Excel style toolbar)
+        # The Formatting Toolbar (2 rows for maximum responsiveness on small screen widths)
         self.toolbar_frame = ctk.CTkFrame(self.left_pane, fg_color="transparent", border_width=0)
-        self.toolbar_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(5, 5))
+        self.toolbar_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(3, 3))
         
-        btn_configs = [
-            ("B", lambda: self._apply_format("**", "**"), "Bold"),
-            ("I", lambda: self._apply_format("*", "*"), "Italic"),
-            ("S", lambda: self._apply_format("~~", "~~"), "Strikethrough"),
-            ("U", lambda: self._apply_format("<u>", "</u>"), "Underline"),
-            ("Code", lambda: self._apply_format("`", "`"), "Inline Code"),
-            ("Link 🔗", self._apply_link, "Link"),
-            ("H1", lambda: self._apply_heading("#"), "H1"),
-            ("H2", lambda: self._apply_heading("##"), "H2"),
-            ("H3", lambda: self._apply_heading("###"), "H3"),
-            ("List ☰", lambda: self._apply_format("- ", ""), "Bullet List"),
-            ("List 🔢", lambda: self._apply_format("1. ", ""), "Numbered List"),
-            ("Table ⊞", self._insert_table, "Table"),
+        self.toolbar_row1 = ctk.CTkFrame(self.toolbar_frame, fg_color="transparent", border_width=0)
+        self.toolbar_row1.pack(side="top", anchor="w", pady=(0, 2))
+
+        self.toolbar_row2 = ctk.CTkFrame(self.toolbar_frame, fg_color="transparent", border_width=0)
+        self.toolbar_row2.pack(side="top", anchor="w", pady=(2, 0))
+
+        row1_configs = [
+            ("B", "B", lambda: self._apply_format("**", "**"), "Bold"),
+            ("I", "I", lambda: self._apply_format("*", "*"), "Italic"),
+            ("S", "S", lambda: self._apply_format("~~", "~~"), "Strikethrough"),
+            ("U", "U", lambda: self._apply_format("<u>", "</u>"), "Underline"),
+            ("Code", "</>", lambda: self._apply_format("`", "`"), "Inline Code"),
+            ("Link", "🔗", self._apply_link, "Link"),
         ]
-        
-        for idx, (text, command, tooltip) in enumerate(btn_configs):
+
+        row2_configs = [
+            ("H1", "H1", lambda: self._apply_heading("#"), "H1"),
+            ("H2", "H2", lambda: self._apply_heading("##"), "H2"),
+            ("H3", "H3", lambda: self._apply_heading("###"), "H3"),
+            ("List", "•", lambda: self._apply_format("- ", ""), "Bullet List"),
+            ("1. List", "1.", lambda: self._apply_format("1. ", ""), "Numbered List"),
+            ("Table", "⊞", self._insert_table, "Table"),
+        ]
+
+        self.toolbar_buttons = []
+        for full_txt, icon_txt, command, tooltip in row1_configs:
             btn = ctk.CTkButton(
-                self.toolbar_frame, text=text, width=45 if len(text) > 2 else 32, height=24,
-                font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
-                fg_color=STYLE["btn_utility_fg"],
-                hover_color=STYLE["btn_utility_hover"],
-                border_color=STYLE["btn_utility_border"],
-                border_width=1,
-                text_color=STYLE["text_primary"],
+                self.toolbar_row1, text=full_txt, width=38 if len(full_txt) > 3 else (32 if len(full_txt) > 1 else 26), height=24,
+                font=ctk.CTkFont(family=STYLE["font_family_body"], size=10 if len(full_txt) > 4 else 11, weight="bold"),
+                fg_color=STYLE["btn_utility_fg"], hover_color=STYLE["btn_utility_hover"],
+                border_color=STYLE["btn_utility_border"], border_width=1, text_color=STYLE["text_primary"],
                 command=command
             )
-            btn.pack(side="left", padx=2)
+            btn.pack(side="left", padx=1)
+            self.toolbar_buttons.append((btn, full_txt, icon_txt))
+
+        for full_txt, icon_txt, command, tooltip in row2_configs:
+            btn = ctk.CTkButton(
+                self.toolbar_row2, text=full_txt, width=38 if len(full_txt) > 3 else (32 if len(full_txt) > 1 else 26), height=24,
+                font=ctk.CTkFont(family=STYLE["font_family_body"], size=10 if len(full_txt) > 4 else 11, weight="bold"),
+                fg_color=STYLE["btn_utility_fg"], hover_color=STYLE["btn_utility_hover"],
+                border_color=STYLE["btn_utility_border"], border_width=1, text_color=STYLE["text_primary"],
+                command=command
+            )
+            btn.pack(side="left", padx=1)
+            self.toolbar_buttons.append((btn, full_txt, icon_txt))
 
         # The Live Monospace Text Editor (with Undo/Redo tracking)
         self.editor = ctk.CTkTextbox(
@@ -461,7 +502,7 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_mono"], size=13),
             border_width=1, 
             border_color=STYLE["btn_utility_border"], 
-            corner_radius=8,
+            corner_radius=0,
             undo=True
         )
         self.editor.grid(row=4, column=0, sticky="nsew", padx=15, pady=8)
@@ -497,29 +538,19 @@ class App(BaseClass): # type: ignore
         )
         self.word_lbl.pack(side="left", padx=5)
 
-        self.btn_md_guide = ctk.CTkButton(
-            editor_footer, text="MD Guide ❔", width=85, height=24, 
-            fg_color=STYLE["btn_utility_fg"], 
-            hover_color=STYLE["btn_utility_hover"],
-            border_color=STYLE["btn_utility_border"],
-            border_width=1,
-            text_color=STYLE["text_primary"],
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
-            command=self._show_md_guide
-        )
-        self.btn_md_guide.pack(side="left", padx=15)
+
 
         self.btn_clear = ctk.CTkButton(
-            editor_footer, text="Clear All", width=70, height=24, 
+            editor_footer, text="Clear All", width=65, height=24, 
             fg_color=STYLE["btn_clear_fg"], 
             hover_color=STYLE["btn_clear_hover"],
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._clear_editor
         )
-        self.btn_clear.pack(side="right", padx=5)
+        self.btn_clear.pack(side="right", padx=3)
 
         self.btn_find_replace = ctk.CTkButton(
-            editor_footer, text="Find & Replace", width=95, height=24, 
+            editor_footer, text="🔍 Find", width=62, height=24, 
             fg_color=STYLE["btn_utility_fg"], 
             hover_color=STYLE["btn_utility_hover"],
             border_color=STYLE["btn_utility_border"],
@@ -528,31 +559,31 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
             command=self._toggle_search_panel
         )
-        self.btn_find_replace.pack(side="right", padx=5)
+        self.btn_find_replace.pack(side="right", padx=3)
 
         self.btn_redo = ctk.CTkButton(
-            editor_footer, text="Redo", width=55, height=24, 
+            editor_footer, text="↷", width=32, height=24, 
             fg_color=STYLE["btn_utility_fg"], 
             hover_color=STYLE["btn_utility_hover"],
             border_color=STYLE["btn_utility_border"],
             border_width=1,
             text_color=STYLE["text_primary"],
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
             command=self._redo
         )
-        self.btn_redo.pack(side="right", padx=5)
+        self.btn_redo.pack(side="right", padx=3)
 
         self.btn_undo = ctk.CTkButton(
-            editor_footer, text="Undo", width=55, height=24, 
+            editor_footer, text="↶", width=32, height=24, 
             fg_color=STYLE["btn_utility_fg"], 
             hover_color=STYLE["btn_utility_hover"],
             border_color=STYLE["btn_utility_border"],
             border_width=1,
             text_color=STYLE["text_primary"],
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"),
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
             command=self._undo
         )
-        self.btn_undo.pack(side="right", padx=5)
+        self.btn_undo.pack(side="right", padx=3)
 
 
         # ── RIGHT PANE: Output Configuration, Preview & Actions ───────────────
@@ -582,7 +613,7 @@ class App(BaseClass): # type: ignore
         self.config_frame = ctk.CTkFrame(
             self.right_pane, 
             fg_color=STYLE["btn_utility_fg"], 
-            corner_radius=8,
+            corner_radius=4,
             border_width=1,
             border_color=STYLE["btn_utility_border"]
         )
@@ -679,7 +710,7 @@ class App(BaseClass): # type: ignore
             scrollbar_fg_color=STYLE["btn_utility_fg"],
             border_width=1, 
             border_color=STYLE["btn_utility_border"], 
-            corner_radius=8
+            corner_radius=0
         )
         self.preview_frame.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
 
@@ -691,7 +722,7 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_mono"], size=12),
             border_width=1, 
             border_color=STYLE["btn_utility_border"], 
-            corner_radius=8
+            corner_radius=0
         )
         # Note: self.preview_box is NOT gridded by default, managed by _on_tab_change
         self._write_preview(
@@ -705,41 +736,41 @@ class App(BaseClass): # type: ignore
         # Large Action Button & Status Info
         action_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", border_width=0)
         action_frame.grid(row=4, column=0, sticky="ew", padx=15, pady=(5, 12))
-        action_frame.columnconfigure(0, weight=3)
-        action_frame.columnconfigure(1, weight=2)
-        action_frame.columnconfigure(2, weight=2)
+        action_frame.columnconfigure(0, weight=1, uniform="act_btn")
+        action_frame.columnconfigure(1, weight=1, uniform="act_btn")
+        action_frame.columnconfigure(2, weight=1, uniform="act_btn")
 
         self.btn_convert = ctk.CTkButton(
-            action_frame, text="CONVERT & SAVE", height=48,
-            font=ctk.CTkFont(family=STYLE["font_family_title"], size=13, weight="bold"),
+            action_frame, text="Convert", height=44,
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=12, weight="bold"),
             fg_color=STYLE["text_primary"], 
             hover_color=STYLE["text_primary"], 
             text_color=STYLE["text_primary"],
             command=self._run_conversion
         )
-        self.btn_convert.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=(0, 5))
+        self.btn_convert.grid(row=0, column=0, sticky="ew", padx=(0, 3), pady=(0, 5))
 
         self.btn_open_file = ctk.CTkButton(
-            action_frame, text="OPEN FILE", height=48,
-            font=ctk.CTkFont(family=STYLE["font_family_title"], size=13, weight="bold"),
+            action_frame, text="Open File", height=44,
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=12, weight="bold"),
             fg_color=STYLE["btn_utility_fg"], 
             hover_color=STYLE["btn_utility_hover"], 
             text_color=STYLE["status_gray"],
             state="disabled",
             command=self._open_generated_file
         )
-        self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(4, 4), pady=(0, 5))
+        self.btn_open_file.grid(row=0, column=1, sticky="ew", padx=(3, 3), pady=(0, 5))
 
         self.btn_open_folder = ctk.CTkButton(
-            action_frame, text="SHOW IN FOLDER", height=48,
-            font=ctk.CTkFont(family=STYLE["font_family_title"], size=13, weight="bold"),
+            action_frame, text="Folder", height=44,
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=12, weight="bold"),
             fg_color=STYLE["btn_utility_fg"], 
             hover_color=STYLE["btn_utility_hover"], 
             text_color=STYLE["status_gray"],
             state="disabled",
             command=self._open_containing_folder
         )
-        self.btn_open_folder.grid(row=0, column=2, sticky="ew", padx=(4, 0), pady=(0, 5))
+        self.btn_open_folder.grid(row=0, column=2, sticky="ew", padx=(3, 0), pady=(0, 5))
 
         self.progress_bar = ctk.CTkProgressBar(action_frame, mode="indeterminate", width=10, height=8, progress_color=STYLE["status_green"])
         # Kept hidden initially until conversion begins
@@ -826,7 +857,7 @@ class App(BaseClass): # type: ignore
             self._write_preview(tooltip_msg)
         else:
             palette = PALETTES[self.current_palette_var.get()]
-            self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="CONVERT & SAVE")
+            self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="Convert")
             self._set_status("Mode changed to: " + mode, "primary")
             
             self._update_markdown_preview()
@@ -884,14 +915,36 @@ class App(BaseClass): # type: ignore
             self.preview_frame.grid_forget()
             self.preview_box.grid(row=3, column=0, sticky="nsew", padx=15, pady=8)
 
+    def _format_num(self, n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        elif n >= 100_000:
+            return f"{n / 1_000:.0f}K"
+        elif n >= 10_000:
+            return f"{n / 1_000:.1f}K"
+        return f"{n:,}"
+
     def _update_counts(self):
         is_large_or_blocked = (self.full_content and len(self.full_content) > EDITOR_DISPLAY_LIMIT) or self.is_preview_blocked
         content = self.full_content if is_large_or_blocked else self.editor.get("1.0", "end-1c")
         
         chars = len(content)
         words = len(content.split())
-        self.char_lbl.configure(text=f"Characters: {chars}")
-        self.word_lbl.configure(text=f" |  Words: {words}")
+
+        is_compact = getattr(self, "_is_compact_layout", False)
+        if is_compact:
+            c_text = f"C: {self._format_num(chars)}"
+            w_text = f" | W: {self._format_num(words)}"
+        else:
+            c_text = f"Characters: {self._format_num(chars)}"
+            w_text = f" |  Words: {self._format_num(words)}"
+
+        if getattr(self, "_last_c_text", None) != c_text:
+            self._last_c_text = c_text
+            self.char_lbl.configure(text=c_text)
+        if getattr(self, "_last_w_text", None) != w_text:
+            self._last_w_text = w_text
+            self.word_lbl.configure(text=w_text)
 
     def _auto_output(self, in_path: str):
         base = os.path.splitext(in_path)[0]
@@ -926,7 +979,7 @@ class App(BaseClass): # type: ignore
                 self.btn_convert.configure(state="disabled", fg_color=STYLE["status_red"], text_color_disabled=("#ffffff", "#ffffff"), text="UNAVAILABLE")
             else:
                 palette = PALETTES[self.current_palette_var.get()]
-                self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="CONVERT & SAVE")
+                self.btn_convert.configure(state="normal", fg_color=palette["btn_convert_fg"], text_color=("#ffffff", "#ffffff"), text="Convert")
         else:
             self.btn_convert.configure(state="disabled")
 
@@ -1515,6 +1568,65 @@ class App(BaseClass): # type: ignore
             self._overlay_visible = False
             self.drop_overlay.place_forget()
 
+    def _on_window_configure(self, event):
+        if event.widget == self:
+            if getattr(self, "_win_resize_timer", None) is not None:
+                try:
+                    self.after_cancel(self._win_resize_timer)
+                except Exception:
+                    pass
+            self._win_resize_timer = self.after(150, self._do_window_configure)
+
+    def _do_window_configure(self):
+        w = self.winfo_width()
+        is_compact = w < 960
+        
+        # Only trigger layout reconfiguration when crossing the 960px breakpoint!
+        if getattr(self, "_is_compact_layout", None) != is_compact:
+            self._is_compact_layout = is_compact
+            if is_compact:
+                if hasattr(self, "subtitle_lbl") and self.subtitle_lbl.winfo_viewable():
+                    self.subtitle_lbl.pack_forget()
+                if hasattr(self, "title_lbl"):
+                    self.title_lbl.configure(text=f"Docs Converter v{__version__}")
+                if hasattr(self, "editor_title"):
+                    self.editor_title.configure(text="INPUT EDITOR")
+                if hasattr(self, "btn_md_guide"):
+                    self.btn_md_guide.configure(text="Guide ❔", width=65)
+                if hasattr(self, "drop_lbl"):
+                    self.drop_lbl.configure(text="Drag & drop or 'Browse'...")
+                if hasattr(self, "btn_copy_path"):
+                    self.btn_copy_path.configure(text="Copy", width=55)
+                if hasattr(self, "btn_find_replace"):
+                    self.btn_find_replace.configure(text="🔍", width=32)
+                if hasattr(self, "btn_clear"):
+                    self.btn_clear.configure(text="Clear", width=50)
+                if hasattr(self, "toolbar_buttons"):
+                    for btn, full_txt, icon_txt in self.toolbar_buttons:
+                        btn.configure(text=icon_txt, width=28 if len(icon_txt) <= 2 else 32)
+            else:
+                if hasattr(self, "subtitle_lbl") and not self.subtitle_lbl.winfo_viewable():
+                    self.subtitle_lbl.pack(side="left", padx=5, pady=16)
+                if hasattr(self, "title_lbl"):
+                    self.title_lbl.configure(text=f"Document Converter Workspace v{__version__}")
+                if hasattr(self, "editor_title"):
+                    self.editor_title.configure(text="INPUT EDITOR & OVERVIEW (MARKDOWN / TEXT)")
+                if hasattr(self, "btn_md_guide"):
+                    self.btn_md_guide.configure(text="MD Guide ❔", width=80)
+                if hasattr(self, "drop_lbl"):
+                    self.drop_lbl.configure(text="Drag & drop file here or click 'Browse' to load content...")
+                if hasattr(self, "btn_copy_path"):
+                    self.btn_copy_path.configure(text="Copy Path", width=75)
+                if hasattr(self, "btn_find_replace"):
+                    self.btn_find_replace.configure(text="🔍 Find", width=62)
+                if hasattr(self, "btn_clear"):
+                    self.btn_clear.configure(text="Clear All", width=65)
+                if hasattr(self, "toolbar_buttons"):
+                    for btn, full_txt, icon_txt in self.toolbar_buttons:
+                        btn.configure(text=full_txt, width=38 if len(full_txt) > 3 else (32 if len(full_txt) > 1 else 26))
+
+        self._update_counts()
+
     def _change_appearance_mode(self, mode: str):
         ctk.set_appearance_mode(mode)
         # Schedule the full background and title bar update to allow CustomTkinter's system theme resolver to settle
@@ -1700,7 +1812,7 @@ class App(BaseClass): # type: ignore
         self.destroy()
 
     def _build_search_panel(self, parent_pane):
-        self.search_frame = ctk.CTkFrame(parent_pane, fg_color=STYLE["btn_utility_fg"], corner_radius=8, border_width=1, border_color=STYLE["btn_utility_border"])
+        self.search_frame = ctk.CTkFrame(parent_pane, fg_color=STYLE["btn_utility_fg"], corner_radius=4, border_width=1, border_color=STYLE["btn_utility_border"])
         
         self.search_frame.columnconfigure(0, weight=0) # Labels
         self.search_frame.columnconfigure(1, weight=1) # Entries
@@ -1964,89 +2076,227 @@ class App(BaseClass): # type: ignore
     def _show_md_guide(self):
         import tkinter as tk
         guide_win = tk.Toplevel(self)
-        guide_win.title("Markdown Syntax Guide")
-        guide_win.geometry("450x440")
+        guide_win.title("Document Converter User Manual")
+        
+        w_width, w_height = 740, 530
+        try:
+            self.update_idletasks()
+            gx = self.winfo_rootx() + max(0, (self.winfo_width() - w_width) // 2)
+            gy = self.winfo_rooty() + max(0, (self.winfo_height() - w_height) // 2)
+            guide_win.geometry(f"{w_width}x{w_height}+{gx}+{gy}")
+        except Exception:
+            guide_win.geometry(f"{w_width}x{w_height}")
+
         guide_win.resizable(False, False)
-        
-        # Resolve background theme color
-        bg_color = self.workspace.cget("fg_color")
-        if isinstance(bg_color, tuple):
-            bg_color = bg_color[1] if ctk.get_appearance_mode() == "Dark" else bg_color[0]
-        guide_win.configure(bg=bg_color)
-        
-        # Make it transient & grab focus (modal behavior)
+
+        # Theme-derived background colors
+        mode = ctk.get_appearance_mode().lower()
+        is_dark = mode == "dark"
+        bg_main = "#111216" if is_dark else "#f3f4f6"
+        bg_sidebar = "#181a22" if is_dark else "#ffffff"
+        fg_text = "#ffffff" if is_dark else "#1d1d1f"
+        fg_muted = "#8f93a7" if is_dark else "#555555"
+        bg_card = "#1d202b" if is_dark else "#ffffff"
+        border_col = "#2b2f42" if is_dark else "#e5e7eb"
+        btn_active_bg = "#5d3fd3" if is_dark else "#725ac1"
+        btn_active_fg = "#ffffff"
+
+        guide_win.configure(bg=bg_main)
         guide_win.transient(self)
         guide_win.grab_set()
         guide_win.focus_set()
-        
-        fg_color = "#ffffff" if ctk.get_appearance_mode() == "Dark" else "#1d1d1f"
-        
-        title_lbl = tk.Label(
-            guide_win, text="Supported Markdown Formatting",
-            font=("Segoe UI", 14, "bold"),
-            bg=bg_color,
-            fg=fg_color
-        )
-        title_lbl.pack(pady=(15, 10))
-        
-        text_bg = "#1d202b" if ctk.get_appearance_mode() == "Dark" else "#f3f4f6"
-        text_fg = "#f8f8f2" if ctk.get_appearance_mode() == "Dark" else "#1d1d1f"
-        
-        guide_txt = tk.Text(
-            guide_win, width=50, height=18,
-            font=("Consolas", 10),
-            bg=text_bg,
-            fg=text_fg,
-            bd=1,
-            relief="flat",
-            padx=10,
-            pady=10
-        )
-        guide_txt.pack(padx=20, pady=5)
-        
-        cheat_sheet = (
-            "Syntax Cheatsheet:\n"
-            "=========================================\n\n"
-            "1. Headings (Tiêu đề):\n"
-            "   # Heading 1\n"
-            "   ## Heading 2\n"
-            "   ### Heading 3\n\n"
-            "2. Bold (In đậm):\n"
-            "   **text** or __text__\n\n"
-            "3. Italic (In nghiêng):\n"
-            "   *text* or _text_\n\n"
-            "4. Strikethrough (Gạch ngang):\n"
-            "   ~~text~~\n\n"
-            "5. Underline (Gạch chân):\n"
-            "   <u>text</u>\n\n"
-            "6. Inline Code (Mã dòng):\n"
-            "   `code`\n\n"
-            "7. Hyperlink (Liên kết):\n"
-            "   [Link Text](https://url.com)\n\n"
-            "8. Lists (Danh sách):\n"
-            "   - Bullet Item 1\n"
-            "     - Nested Bullet Item (Indent 2 spaces)\n"
-            "   1. Numbered Item 1\n"
-            "     1. Nested Numbered (Indent 2 spaces)\n\n"
-            "9. Tables (Bảng dữ liệu):\n"
-            "   | Header 1 | Header 2 |\n"
-            "   | --- | --- |\n"
-            "   | **Bold Cell** | [Link](url) |\n"
-        )
-        guide_txt.insert("1.0", cheat_sheet)
-        guide_txt.configure(state="disabled")
-        
-        btn_close = tk.Button(
-            guide_win, text="Close", width=12, height=1,
+
+        # Layout: Left Sidebar (Menu) + Right Content Area
+        sidebar_frame = tk.Frame(guide_win, bg=bg_sidebar, width=200, bd=0)
+        sidebar_frame.pack(side="left", fill="y")
+        sidebar_frame.pack_propagate(False)
+
+        # Thin separator between sidebar and content
+        sep = tk.Frame(guide_win, bg=border_col, width=1)
+        sep.pack(side="left", fill="y")
+
+        content_frame = tk.Frame(guide_win, bg=bg_main)
+        content_frame.pack(side="right", fill="both", expand=True, padx=15, pady=15)
+
+        # Sidebar Title
+        lbl_nav = tk.Label(
+            sidebar_frame, text="DOCUMENTATION",
             font=("Segoe UI", 10, "bold"),
-            bg="#5d3fd3" if ctk.get_appearance_mode() == "Dark" else "#ebe4ff",
-            fg="#ffffff" if ctk.get_appearance_mode() == "Dark" else "#5d3fd3",
-            activebackground=bg_color,
-            bd=1,
-            relief="flat",
+            bg=bg_sidebar, fg=fg_muted, anchor="w"
+        )
+        lbl_nav.pack(fill="x", padx=15, pady=(20, 10))
+
+        # Content Dictionary mapping Topic Name -> Text Content
+        docs_data = {
+            "🚀 Quick Start": (
+                "QUICK START GUIDE\n"
+                "====================================================================\n\n"
+                "Welcome to Document Converter Workspace!\n"
+                "This application enables you to edit, format, and convert documents\n"
+                "between Markdown, Word, Excel, CSV, PDF, and HTML formats.\n\n"
+                "BASIC 3-STEP CONVERSION WORKFLOW:\n"
+                "--------------------------------------------------------------------\n"
+                "Step 1: LOAD A DOCUMENT\n"
+                "   • Drag & drop your file (.docx, .pdf, .xlsx, .csv, .md, .html) into\n"
+                "     the Left Editor Pane, or click [ Browse ] to select a file.\n\n"
+                "Step 2: EDIT & FORMAT (Optional)\n"
+                "   • Use the Monospace Editor and Formatting Toolbar [ B ] [ I ] [ H1 ]\n"
+                "     to adjust content. Click [ Document Preview ] to view rendered output.\n\n"
+                "Step 3: CONVERT & SAVE\n"
+                "   • Select target mode in [ Mode: Word -> MD ▾ ], then click the main\n"
+                "     action button [ Convert & Save ]. Click [ Open File ] when complete!"
+            ),
+            "📂 Document Import": (
+                "DOCUMENT IMPORT & EXTRACTION\n"
+                "====================================================================\n\n"
+                "SUPPORTED INPUT FORMATS:\n"
+                "--------------------------------------------------------------------\n"
+                "• Word Documents (.docx) - Preserves headings, bold/italic, tables & lists\n"
+                "• PDF Files (.pdf)       - Smart text & layout extraction\n"
+                "• Excel Sheets (.xlsx)   - Reads cell grids & rich font formatting\n"
+                "• CSV Files (.csv)       - Converts tabular data into clean Markdown tables\n"
+                "• HTML Pages (.html)     - Parses HTML tags into structured Markdown\n"
+                "• Markdown (.md)         - Plain text live editor\n\n"
+                "IMPORT METHODS:\n"
+                "--------------------------------------------------------------------\n"
+                "1. Drag & Drop: Drag any supported file over the Left Editor area.\n"
+                "   A purple drop overlay will appear confirming the drop target.\n"
+                "2. Browse Button: Click [ Browse ] in the upper file bar.\n"
+                "3. Direct Typing: Type or paste Markdown directly into the Monospace Editor."
+            ),
+            "✏️ Editor & Tools": (
+                "EDITOR & TOOLBAR CONTROLS\n"
+                "====================================================================\n\n"
+                "FORMATTING TOOLBAR BUTTONS:\n"
+                "--------------------------------------------------------------------\n"
+                "  [ B ]      Bold selected text (**text**)\n"
+                "  [ I ]      Italicize selected text (*text*)\n"
+                "  [ S ]      Strikethrough text (~~text~~)\n"
+                "  [ U ]      Underline text (<u>text</u>)\n"
+                "  [ Code ]   Inline code block (`code`)\n"
+                "  [ Link 🔗] Insert URL hyperlink ([text](url))\n"
+                "  [ H1-H3 ]  Apply Heading levels (#, ##, ###)\n"
+                "  [ List ☰]  Bullet list item (- item)\n"
+                "  [ List 🔢] Numbered list item (1. item)\n"
+                "  [ Table ⊞] Insert Markdown sample table grid\n\n"
+                "FOOTER ACTIONS & KEYBOARD SHORTCUTS:\n"
+                "--------------------------------------------------------------------\n"
+                "  [ ↶ ] (Ctrl+Z)      Undo last edit\n"
+                "  [ ↷ ] (Ctrl+Y)      Redo reverted edit\n"
+                "  [ 🔍 Find ] (Ctrl+F) Toggle Search & Replace panel\n"
+                "  [ Clear All ]       Clear workspace & remove autosaved draft\n"
+                "  Characters & Words  Live real-time character & word counters"
+            ),
+            "⚡ Convert & Export": (
+                "CONVERT & EXPORT WORKFLOW\n"
+                "====================================================================\n\n"
+                "OUTPUT CONFIGURATION PANEL:\n"
+                "--------------------------------------------------------------------\n"
+                "• [ Mode: ▾ ]      Select target conversion direction:\n"
+                "                    - MD -> Excel (.xlsx)     - MD -> Word (.docx)\n"
+                "                    - MD -> CSV (.csv)        - MD -> PDF (.pdf)\n"
+                "                    - MD -> HTML (.html)      - Excel / Word / PDF -> MD\n\n"
+                "• [ Save Path ]    Auto-populated destination path.\n"
+                "                    Click [ Browse ] to change folder or file name.\n"
+                "                    Click [ Copy Path ] to copy location to clipboard.\n\n"
+                "EXPORT ACTIONS:\n"
+                "--------------------------------------------------------------------\n"
+                "  [ Convert & Save ] Execute conversion & save final document\n"
+                "  [ Open File ]      Open generated document in default OS application\n"
+                "  [ Open Folder ]    Open Windows Explorer & highlight destination file"
+            ),
+            "🎨 Themes & Settings": (
+                "THEMES & AUTOMATIC DRAFT RECOVERY\n"
+                "====================================================================\n\n"
+                "APPEARANCE & ACCENT PALETTES:\n"
+                "--------------------------------------------------------------------\n"
+                "Located in the top right window header:\n"
+                "• [ Theme: ▾ ] Select color palette (Violet Cyberpunk, Emerald Obsidian,\n"
+                "               Deep Ocean, Sunset Gold).\n"
+                "• [ Mode: ▾ ]  Toggle Dark Mode, Light Mode, or System Auto-sync.\n\n"
+                "AUTOMATIC DRAFT RECOVERY:\n"
+                "--------------------------------------------------------------------\n"
+                "• The editor automatically saves your unsaved draft every 5 seconds.\n"
+                "• If closed unexpectedly, a recovery prompt will appear on startup\n"
+                "  offering to restore your last session."
+            ),
+            "📝 Markdown Syntax": (
+                "MARKDOWN SYNTAX CHEATSHEET\n"
+                "====================================================================\n\n"
+                "1. HEADINGS:\n"
+                "   # Heading Level 1\n"
+                "   ## Heading Level 2\n"
+                "   ### Heading Level 3\n\n"
+                "2. TEXT STYLES:\n"
+                "   **Bold Text**  or  __Bold Text__\n"
+                "   *Italic Text*  or  _Italic Text_\n"
+                "   ~~Strikethrough~~  |  <u>Underlined</u>  |  `Inline Code`\n\n"
+                "3. HYPERLINKS:\n"
+                "   [Link Title](https://example.com)\n\n"
+                "4. LISTS:\n"
+                "   - Unordered bullet point\n"
+                "     - Sub-bullet point (Indent 2 spaces)\n"
+                "   1. Ordered list item 1\n"
+                "     1. Sub-ordered list item (Indent 2 spaces)\n\n"
+                "5. TABLES:\n"
+                "   | Column 1 | Column 2 |\n"
+                "   | --- | --- |\n"
+                "   | **Bold Cell** | [Link](https://example.com) |\n"
+                "   | Data Cell 1 | Data Cell 2 |"
+            )
+        }
+
+        # Main Text Widget for Content Display
+        text_widget = tk.Text(
+            content_frame,
+            font=("Consolas", 10),
+            bg=bg_card, fg=fg_text,
+            bd=1, relief="solid",
+            padx=12, pady=12,
+            wrap="word"
+        )
+        text_widget.pack(fill="both", expand=True, pady=(0, 10))
+
+        # Bottom Close Button
+        btn_close = tk.Button(
+            content_frame, text="Close Guide",
+            font=("Segoe UI", 10, "bold"),
+            bg=btn_active_bg, fg="#ffffff",
+            activebackground=btn_active_bg, activeforeground="#ffffff",
+            bd=0, relief="flat", height=1, width=15,
             command=guide_win.destroy
         )
-        btn_close.pack(pady=(10, 15))
+        btn_close.pack(side="right")
+
+        # Sidebar Navigation Buttons state tracking
+        nav_buttons = {}
+
+        def select_topic(topic_name):
+            for t_name, b_widget in nav_buttons.items():
+                if t_name == topic_name:
+                    b_widget.configure(bg=btn_active_bg, fg=btn_active_fg)
+                else:
+                    b_widget.configure(bg=bg_sidebar, fg=fg_text)
+            
+            text_widget.configure(state="normal")
+            text_widget.delete("1.0", "end")
+            text_widget.insert("1.0", docs_data[topic_name])
+            text_widget.configure(state="disabled")
+
+        for topic in docs_data.keys():
+            btn = tk.Button(
+                sidebar_frame, text=topic,
+                font=("Segoe UI", 10, "bold"),
+                bg=bg_sidebar, fg=fg_text,
+                activebackground=btn_active_bg, activeforeground=btn_active_fg,
+                bd=0, relief="flat", anchor="w", padx=15, pady=8,
+                command=lambda t=topic: select_topic(t)
+            )
+            btn.pack(fill="x", pady=2)
+            nav_buttons[topic] = btn
+
+        # Select first topic by default
+        select_topic("🚀 Quick Start")
 
     def _apply_format(self, prefix, suffix):
         import tkinter as tk
