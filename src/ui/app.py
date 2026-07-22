@@ -217,6 +217,7 @@ class App(BaseClass): # type: ignore
         self._badge_timer_id = None
         self._toast_timer_id = None
         self._preview_timer = None
+        self._cache_row_visible = False
         
         self._block_update_dimensions = False
         
@@ -317,21 +318,7 @@ class App(BaseClass): # type: ignore
             text_color=STYLE["text_primary"],
             command=self._change_appearance_mode
         )
-        self.appearance_menu.pack(side="left", padx=(0, 10))
-
-        self.btn_settings = ctk.CTkButton(
-            theme_ctrl_frame,
-            text="⚙️ Settings",
-            width=95, height=28,
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
-            fg_color=STYLE["btn_utility_fg"],
-            hover_color=STYLE["btn_utility_hover"],
-            border_color=STYLE["btn_utility_border"],
-            border_width=1,
-            text_color=STYLE["text_primary"],
-            command=self._open_settings_dialog
-        )
-        self.btn_settings.pack(side="left")
+        self.appearance_menu.pack(side="left")
 
         # Thin border separator line below the header
         self.separator = ctk.CTkFrame(self, fg_color=STYLE["btn_utility_border"], height=1, corner_radius=0, border_width=0)
@@ -639,6 +626,18 @@ class App(BaseClass): # type: ignore
         )
         self.lbl_out.pack(side="left")
         
+        self.btn_toggle_cache = ctk.CTkButton(
+            row_out, text="⚙️ Cache", width=70, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            command=self._toggle_cache_row
+        )
+        self.btn_toggle_cache.pack(side="right", padx=2)
+
         self.btn_browse_out = ctk.CTkButton(
             row_out, text="Browse", width=65, height=28,
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
@@ -669,6 +668,51 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12)
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
+
+        # Collapsible Cache Folder row (Hidden by default, toggles on clicking ⚙️ Cache)
+        self.cache_row = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
+        
+        ctk.CTkLabel(
+            self.cache_row, text="Media Cache:", width=90, anchor="w", 
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            text_color=STYLE["text_muted"]
+        ).pack(side="left")
+
+        self.btn_browse_cache = ctk.CTkButton(
+            self.cache_row, text="Browse", width=65, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            command=self._browse_cache_folder
+        )
+        self.btn_browse_cache.pack(side="right", padx=2)
+
+        self.btn_open_cache = ctk.CTkButton(
+            self.cache_row, text="Open Cache", width=85, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
+            fg_color=STYLE["btn_utility_fg"], 
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            command=self._open_cache_folder
+        )
+        self.btn_open_cache.pack(side="right", padx=2)
+        
+        from src.services.media_asset_manager import MediaAssetManager
+        default_cache = MediaAssetManager().cache_dir
+
+        self.cache_path_entry = ctk.CTkEntry(
+            self.cache_row,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            height=28
+        )
+        self.cache_path_entry.insert(0, default_cache)
+        self.cache_path_entry.pack(side="left", fill="x", expand=True, padx=5)
+        self.cache_path_entry.bind("<KeyRelease>", self._on_cache_entry_changed)
 
         # Segmented Tab Controller
         self.tab_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", height=35)
@@ -1266,6 +1310,23 @@ class App(BaseClass): # type: ignore
                 self._set_status(f"Failed to open cache: {e}", "red")
         else:
             self._set_status("Cache folder does not exist!", "orange")
+
+    def _on_cache_entry_changed(self, event=None):
+        new_path = self.cache_path_entry.get().strip()
+        if new_path:
+            from src.services.media_asset_manager import MediaAssetManager
+            MediaAssetManager().cache_dir = new_path
+
+    def _toggle_cache_row(self):
+        if self._cache_row_visible:
+            self.cache_row.pack_forget()
+            self._cache_row_visible = False
+            self.btn_toggle_cache.configure(fg_color=STYLE["btn_utility_fg"])
+        else:
+            self.cache_row.pack(fill="x", padx=12, pady=(0, 8))
+            self._cache_row_visible = True
+            palette = PALETTES[self.current_palette_var.get()]
+            self.btn_toggle_cache.configure(fg_color=palette["btn_open_fg"])
 
     def _open_settings_dialog(self):
         from src.services.media_asset_manager import MediaAssetManager

@@ -16,7 +16,7 @@ class WordModule(BaseDocumentModule):
 
     @property
     def required_dependencies(self) -> list[str]:
-        return ["python-docx", "markitdown"]
+        return ["python-docx", "markitdown", "Pillow"]
 
     def load_to_markdown(self, file_path: str) -> str:
         """Extracts Word .docx to clean Markdown text, preserving tables, headings, bold/italic styles, and lists."""
@@ -288,6 +288,11 @@ class WordModule(BaseDocumentModule):
             add_formatted_runs(p, text, size=size, default_bold=bold, default_color=color)
             return p
 
+        from docx.shared import Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from src.services.media_asset_manager import MediaAssetManager
+        asset_mgr = MediaAssetManager()
+
         lines = markdown_content.splitlines()
         doc = Document()
         style = doc.styles["Normal"]
@@ -297,6 +302,36 @@ class WordModule(BaseDocumentModule):
         i = 0
         while i < len(lines):
             line = lines[i].rstrip("\r\n")
+
+            # Image check (Markdown ![alt](url) or HTML <img src="url">)
+            img_match = re.search(r'!\[([^\]]*)\]\(([^)]+)\)', line) or re.search(r'<img\s+[^>]*?src=["\']([^"\']+)', line)
+            if img_match:
+                src_url = img_match.group(2) if len(img_match.groups()) >= 2 else img_match.group(1)
+                img_path = asset_mgr.resolve_uri(src_url)
+                if not os.path.isabs(img_path):
+                    sess_path = os.path.join(asset_mgr.get_session_dir(), img_path)
+                    if os.path.exists(sess_path):
+                        img_path = sess_path
+                
+                img_path = os.path.normpath(os.path.abspath(img_path))
+                if os.path.exists(img_path) and os.path.isfile(img_path):
+                    try:
+                        p = doc.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run = p.add_run()
+                        
+                        from PIL import Image as PILImage
+                        with PILImage.open(img_path) as pil_img:
+                            w_px, h_px = pil_img.size
+                            w_inches = min(5.8, max(1.5, w_px / 150.0))
+                            
+                        run.add_picture(img_path, width=Inches(w_inches))
+                        p.paragraph_format.space_before = Pt(6)
+                        p.paragraph_format.space_after = Pt(6)
+                        i += 1
+                        continue
+                    except Exception as img_err:
+                        print(f"[DEBUG] WordModule: Failed to insert picture {img_path}: {img_err}")
 
             m = re.match(r"^(#{1,6})\s+(.*)", line)
             if m:

@@ -8,3 +8,5 @@ markitdown[pdf]
 markdown2
 pdfplumber
 markdown-pdf
+pymupdf
+Pillow
