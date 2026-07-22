@@ -125,6 +125,7 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
         self._dim_cache = {}
         
         self.columnconfigure(0, weight=1)
+        self._resize_timer = None
         self.bind("<Configure>", self._on_configure, add="+")
         self._current_width = 400
         
@@ -160,8 +161,19 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
     def _on_configure(self, event):
         if abs(event.width - self._current_width) > 10:
             self._current_width = event.width
-            self._update_wraplengths()
-            self._check_lazy_images()
+            # Hủy timer cũ nếu người dùng vẫn đang tiếp tục kéo thả cửa sổ
+            if self._resize_timer is not None:
+                try:
+                    self.after_cancel(self._resize_timer)
+                except Exception:
+                    pass
+
+            # Định nghĩa hàm callback chạy CẢ HAI tác vụ sau khi dừng kéo 150ms
+            def debounced_resize_update():
+                self._update_wraplengths()
+                self._check_lazy_images()
+
+            self._resize_timer = self.after(150, debounced_resize_update)
 
     def _update_wraplengths(self):
         new_width = self._current_width - 45
