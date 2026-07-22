@@ -104,6 +104,8 @@ class MarkdownTextView(tk.Text):
 
 
 class DocumentPreviewFrame(ctk.CTkScrollableFrame):
+    MAX_CONCURRENT_LOADS = 2
+
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self.palette = None
@@ -113,6 +115,8 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
         
         self._image_cache = {}
         self._lazy_images = []
+        self._active_loads = 0
+        self._dim_cache = {}
         
         self.columnconfigure(0, weight=1)
         self.bind("<Configure>", self._on_configure, add="+")
@@ -180,6 +184,7 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
             self._current_base_dir = base_dir
             
         self._lazy_images = []
+        self._active_loads = 0
 
         # Clear existing widgets
         for widget in self.winfo_children():
@@ -503,20 +508,30 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
         dimensions_str = ""
         
         if file_exists:
-            try:
-                # Open headers only to fetch bounds
-                with Image.open(img_path) as pil_img:
-                    orig_w, orig_h = pil_img.size
-                    dimensions_str = f"{orig_w} × {orig_h}"
-                    
-                    if orig_w > target_w:
-                        ratio = target_w / orig_w
-                        target_h = int(orig_h * ratio)
-                    else:
-                        target_h = orig_h
-            except Exception:
-                file_exists = False
-                dimensions_str = "corrupt image"
+            if img_path in self._dim_cache:
+                orig_w, orig_h = self._dim_cache[img_path]
+                dimensions_str = f"{orig_w} × {orig_h}"
+                if orig_w > target_w:
+                    ratio = target_w / orig_w
+                    target_h = int(orig_h * ratio)
+                else:
+                    target_h = orig_h
+            else:
+                try:
+                    # Open headers only to fetch bounds (only reads file header, no pixel decoding)
+                    with Image.open(img_path) as pil_img:
+                        orig_w, orig_h = pil_img.size
+                        self._dim_cache[img_path] = (orig_w, orig_h)
+                        dimensions_str = f"{orig_w} × {orig_h}"
+                        
+                        if orig_w > target_w:
+                            ratio = target_w / orig_w
+                            target_h = int(orig_h * ratio)
+                        else:
+                            target_h = orig_h
+                except Exception:
+                    file_exists = False
+                    dimensions_str = "corrupt image"
                 
         bg = self.palette["bg_component"] if self.palette else "#f6f8fa"
         border = self.palette["border_color"] if self.palette else "#e1e4e8"
@@ -551,9 +566,10 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
         line_frame = ctk.CTkFrame(inner_placeholder, height=1, fg_color=border)
         line_frame.pack(fill="x", padx=40, pady=(25, 5))
         
+        display_label = f"📷 [Image: {alt_text}] — {dimensions_str}" if alt_text else f"📷 {dimensions_str}"
         lbl_info = ctk.CTkLabel(
             inner_placeholder,
-            text=f"⏳ Loading image...\n({dimensions_str})",
+            text=f"⏳ Loading image...\n({display_label})",
             font=ctk.CTkFont(family=self.style["font_family_body"] if self.style else "Segoe UI", size=10, slant="italic"),
             text_color=self.style["text_muted"] if self.style else "#8f93a7"
         )
@@ -567,7 +583,9 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
             "img_path": img_path,
             "alt_text": alt_text,
             "target_width": target_w,
-            "loaded": False
+            "dimensions_str": dimensions_str,
+            "loaded": False,
+            "loading": False
         })
 
     def _check_lazy_images(self):
@@ -588,9 +606,6 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
             return
 
         for item in self._lazy_images:
-            if item["loaded"]:
-                continue
-
             widget = item["widget"]
             w_y = widget.winfo_y()
             w_h = widget.winfo_height()
@@ -600,51 +615,123 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
 
             is_visible = not (w_bottom_f < top_f or w_top_f > bottom_f)
             if is_visible:
-                self._load_lazy_image(item)
+                if not item["loaded"] and not item.get("loading", False):
+                    if self._active_loads < self.MAX_CONCURRENT_LOADS:
+                        self._load_lazy_image(item)
+            else:
+                if item["loaded"]:
+                    self._unload_lazy_image(item)
+
+    def _unload_lazy_image(self, item):
+        if not item.get("loaded", False):
+            return
+        
+        item["loaded"] = False
+        item["loading"] = False
+        widget = item["widget"]
+        img_path = item["img_path"]
+        target_width = item["target_width"]
+        alt_text = item.get("alt_text", "")
+        mtime = os.path.getmtime(img_path) if os.path.exists(img_path) else 0
+        cache_key = (img_path, target_width, mtime)
+
+        # Unregister from image cache to allow garbage collection of PhotoImage
+        if cache_key in self._image_cache:
+            del self._image_cache[cache_key]
+
+        # Destroy rendered image widgets to release RAM
+        for child in widget.winfo_children():
+            child.destroy()
+
+        # Restore skeleton placeholder loading view
+        bg = self.palette["bg_component"] if self.palette else "#f6f8fa"
+        border = self.palette["border_color"] if self.palette else "#e1e4e8"
+        dimensions_str = item.get("dimensions_str", "")
+
+        inner_placeholder = ctk.CTkFrame(widget, fg_color="transparent")
+        inner_placeholder.pack(fill="both", expand=True)
+        
+        line_frame = ctk.CTkFrame(inner_placeholder, height=1, fg_color=border)
+        line_frame.pack(fill="x", padx=40, pady=(25, 5))
+        
+        display_label = f"📷 [Image: {alt_text}] — {dimensions_str}" if alt_text else f"📷 {dimensions_str}"
+        lbl_info = ctk.CTkLabel(
+            inner_placeholder,
+            text=f"⏳ Loading image...\n({display_label})",
+            font=ctk.CTkFont(family=self.style["font_family_body"] if self.style else "Segoe UI", size=10, slant="italic"),
+            text_color=self.style["text_muted"] if self.style else "#8f93a7"
+        )
+        lbl_info.pack(pady=5)
+
+        line_frame2 = ctk.CTkFrame(inner_placeholder, height=1, fg_color=border)
+        line_frame2.pack(fill="x", padx=40, pady=(5, 25))
 
     def _load_lazy_image(self, item):
-        item["loaded"] = True
+        item["loading"] = True
+        self._active_loads += 1
         img_path = item["img_path"]
         widget = item["widget"]
         alt_text = item["alt_text"]
         target_width = item["target_width"]
         
-        try:
-            mtime = os.path.getmtime(img_path) if os.path.exists(img_path) else 0
-            cache_key = (img_path, target_width, mtime)
+        def finish_load(ctk_img=None, error_msg=None):
+            self._active_loads = max(0, self._active_loads - 1)
+            item["loading"] = False
             
-            if cache_key in self._image_cache:
-                ctk_img = self._image_cache[cache_key]
-            else:
-                pil_img = Image.open(img_path)
-                orig_w, orig_h = pil_img.size
+            try:
+                if not widget.winfo_exists():
+                    return
+            except Exception:
+                return
+
+            if ctk_img:
+                item["loaded"] = True
+                for child in widget.winfo_children():
+                    child.destroy()
+                lbl = ctk.CTkLabel(widget, image=ctk_img, text="")
+                lbl._is_image_label = True  # Flag to bypass wraplength updates
+                lbl.image = ctk_img
+                lbl.pack(fill="both", expand=True)
+            elif error_msg:
+                item["loaded"] = True
+                for child in widget.winfo_children():
+                    child.destroy()
+                error_lbl = ctk.CTkLabel(
+                    widget,
+                    text=error_msg,
+                    font=ctk.CTkFont(family=self.style["font_family_body"] if self.style else "Segoe UI", size=11, slant="italic"),
+                    text_color="#ef476f"
+                )
+                error_lbl.pack(padx=10, fill="both", expand=True)
+
+            self.after(10, self._check_lazy_images)
+
+        import threading
+        def worker():
+            try:
+                mtime = os.path.getmtime(img_path) if os.path.exists(img_path) else 0
+                cache_key = (img_path, target_width, mtime)
                 
-                if orig_w > target_width:
-                    ratio = target_width / orig_w
-                    new_w = int(orig_w * ratio)
-                    new_h = int(orig_h * ratio)
+                if cache_key in self._image_cache:
+                    ctk_img = self._image_cache[cache_key]
                 else:
-                    new_w, new_h = orig_w, orig_h
+                    pil_img = Image.open(img_path)
+                    pil_img.load()
+                    orig_w, orig_h = pil_img.size
                     
-                ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
-                self._image_cache[cache_key] = ctk_img
-            
-            # Clear placeholder layout and render CTkImage
-            for child in widget.winfo_children():
-                child.destroy()
+                    if orig_w > target_width:
+                        ratio = target_width / orig_w
+                        new_w = int(orig_w * ratio)
+                        new_h = int(orig_h * ratio)
+                    else:
+                        new_w, new_h = orig_w, orig_h
+                        
+                    ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
+                    self._image_cache[cache_key] = ctk_img
                 
-            lbl = ctk.CTkLabel(widget, image=ctk_img, text="")
-            lbl._is_image_label = True  # Flag to bypass wraplength updates
-            lbl.image = ctk_img
-            lbl.pack(fill="both", expand=True)
-            
-        except Exception as e:
-            for child in widget.winfo_children():
-                child.destroy()
-            error_lbl = ctk.CTkLabel(
-                widget,
-                text=f"❌ Image Corrupt / Load Failed: {alt_text} ({os.path.basename(img_path)})",
-                font=ctk.CTkFont(family=self.style["font_family_body"] if self.style else "Segoe UI", size=11, slant="italic"),
-                text_color="#ef476f"
-            )
-            error_lbl.pack(padx=10, fill="both", expand=True)
+                self.after(0, lambda: finish_load(ctk_img=ctk_img))
+            except Exception as e:
+                err = f"❌ Image Corrupt / Load Failed: {alt_text} ({os.path.basename(img_path)})"
+                self.after(0, lambda: finish_load(error_msg=err))
+
+        threading.Thread(target=worker, daemon=True).start()
