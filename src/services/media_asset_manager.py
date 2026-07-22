@@ -40,6 +40,10 @@ class MediaAssetManager:
         os.makedirs(self.current_session_dir, exist_ok=True)
         return self.current_session_id
 
+    def open_session(self, file_path: str) -> str:
+        """Opens/starts a session directory for the given file_path."""
+        return self.start_session(file_path)
+
     def get_session_dir(self) -> str:
         """Returns the absolute path of the current session's cache folder."""
         if not self.current_session_dir:
@@ -140,3 +144,7 @@ class MediaAssetManager:
                         shutil.rmtree(item_path)
                 except Exception as e:
                     print(f"[DEBUG] MediaAssetManager: Failed to clean cache dir {item_path}: {e}")
+
+    def cleanup_old_sessions(self, max_age_days: int = 7):
+        """Removes session cache folders older than max_age_days."""
+        self.cleanup_cache(max_age_days=max_age_days)

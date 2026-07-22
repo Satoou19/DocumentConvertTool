@@ -830,7 +830,7 @@ class App(BaseClass): # type: ignore
         def run_cleanup():
             try:
                 from src.services.media_asset_manager import MediaAssetManager
-                MediaAssetManager().cleanup_cache(7)
+                MediaAssetManager().cleanup_old_sessions()
             except Exception as e:
                 print(f"[DEBUG] App: Failed to run background cache cleanup: {e}")
         threading.Thread(target=run_cleanup, daemon=True).start()
@@ -1081,9 +1081,12 @@ class App(BaseClass): # type: ignore
         if path:
             self._load_file_to_editor(path)
 
+    def _load_file(self, path: str):
+        self._load_file_to_editor(path)
+
     def _load_file_to_editor(self, path: str):
         from src.services.media_asset_manager import MediaAssetManager
-        MediaAssetManager().start_session(path)
+        MediaAssetManager().open_session(path)
         result = load_document(path)
         if not result.success:
             self.in_path.set("")
