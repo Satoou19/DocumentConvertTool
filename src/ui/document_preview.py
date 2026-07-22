@@ -18,7 +18,7 @@ class MarkdownTextView(tk.Text):
     """
     A borderless, background-matching tk.Text widget that parses and renders 
     rich text markdown inline elements (bold, italic, code, underline, strike, links)
-    using tkinter tag configurations. Auto-resizes height on width changes.
+    using tkinter tag configurations. Auto-resizes height on width changes using count -displaylines.
     """
     def __init__(self, master, text_content, font_family, font_size, text_color, bg_color, link_color, code_bg, code_fg, **kwargs):
         super().__init__(
@@ -45,6 +45,7 @@ class MarkdownTextView(tk.Text):
         self._render()
 
         self.configure(state="disabled")
+        self.after(10, self._adjust_height)
         self.bind("<Configure>", self._on_configure)
 
     def _setup_tags(self):
@@ -57,7 +58,7 @@ class MarkdownTextView(tk.Text):
         self.tag_configure("underline", underline=True)
         self.tag_configure("strike", overstrike=True)
 
-        mono_font = ctk.CTkFont(family="Consolas", size=self.font_size - 1)
+        mono_font = ctk.CTkFont(family="Consolas", size=max(9, self.font_size - 1))
         self.tag_configure("code", font=mono_font, background=self.code_bg, foreground=self.code_fg)
 
     def _render(self):
@@ -74,7 +75,7 @@ class MarkdownTextView(tk.Text):
             if seg.underline: tags.append("underline")
             if seg.code: tags.append("code")
             
-            if seg.url:
+            if seg.url and not seg.is_image:
                 tag_name = f"link_{link_counter}"
                 self.tag_configure(tag_name, foreground=self.link_color, underline=True)
                 self.tag_bind(tag_name, "<Button-1>", lambda e, u=seg.url: self._open_url(u))
@@ -92,15 +93,20 @@ class MarkdownTextView(tk.Text):
         except Exception as e:
             print(f"[DEBUG] Failed to open URL {url}: {e}")
 
+    def _adjust_height(self):
+        try:
+            self.update_idletasks()
+            res = self.tk.call(self._w, "count", "-displaylines", "1.0", "end-1c")
+            if isinstance(res, (tuple, list)):
+                line_count = int(res[0]) if res else 1
+            else:
+                line_count = int(res)
+            self.configure(height=max(1, line_count))
+        except Exception:
+            pass
+
     def _on_configure(self, event=None):
-        def adjust():
-            try:
-                self.update_idletasks()
-                lines = self.tk.call(self._w, "count", "-displaylines", "1.0", "end-1c")
-                self.configure(height=max(1, int(lines)))
-            except Exception:
-                pass
-        self.after(5, adjust)
+        self.after(5, self._adjust_height)
 
 
 class DocumentPreviewFrame(ctk.CTkScrollableFrame):
@@ -212,6 +218,9 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
                 self._render_table(data)
             elif block_type == "list_item":
                 self._render_list_item(data)
+            elif block_type == "image":
+                alt_text, img_url = data
+                self._render_image_widget(img_url, alt_text)
             else:
                 self._render_paragraph(data)
                 
@@ -281,6 +290,16 @@ class DocumentPreviewFrame(ctk.CTkScrollableFrame):
                 i += 1
                 continue
                 
+            # Image token check: ![alt](url)
+            img_match = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', stripped)
+            if img_match:
+                if current_block:
+                    blocks.append(self._determine_block_type(current_block))
+                    current_block = []
+                blocks.append(("image", (img_match.group(1), img_match.group(2))))
+                i += 1
+                continue
+
             # List item
             if stripped.startswith(("- ", "* ", "• ")) or re.match(r"^\d+\.\s+", stripped):
                 if current_block:

@@ -317,7 +317,21 @@ class App(BaseClass): # type: ignore
             text_color=STYLE["text_primary"],
             command=self._change_appearance_mode
         )
-        self.appearance_menu.pack(side="left")
+        self.appearance_menu.pack(side="left", padx=(0, 10))
+
+        self.btn_settings = ctk.CTkButton(
+            theme_ctrl_frame,
+            text="⚙️ Settings",
+            width=95, height=28,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            fg_color=STYLE["btn_utility_fg"],
+            hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"],
+            border_width=1,
+            text_color=STYLE["text_primary"],
+            command=self._open_settings_dialog
+        )
+        self.btn_settings.pack(side="left")
 
         # Thin border separator line below the header
         self.separator = ctk.CTkFrame(self, fg_color=STYLE["btn_utility_border"], height=1, corner_radius=0, border_width=0)
@@ -617,7 +631,7 @@ class App(BaseClass): # type: ignore
 
         # Path row
         row_out = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
-        row_out.pack(fill="x", padx=12, pady=5)
+        row_out.pack(fill="x", padx=12, pady=(5, 10))
         self.lbl_out = ctk.CTkLabel(
             row_out, text="Output:", width=90, anchor="w", 
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
@@ -655,51 +669,6 @@ class App(BaseClass): # type: ignore
             font=ctk.CTkFont(family=STYLE["font_family_body"], size=12)
         )
         self.entry_out.pack(side="left", fill="x", expand=True, padx=5)
-
-        # Cache Folder row
-        row_cache = ctk.CTkFrame(self.config_frame, fg_color="transparent", border_width=0)
-        row_cache.pack(fill="x", padx=12, pady=(5, 10))
-        ctk.CTkLabel(
-            row_cache, text="Media Cache:", width=90, anchor="w", 
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
-            text_color=STYLE["text_muted"]
-        ).pack(side="left")
-        
-        self.btn_browse_cache = ctk.CTkButton(
-            row_cache, text="Browse", width=65, height=28,
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
-            fg_color=STYLE["btn_utility_fg"], 
-            hover_color=STYLE["btn_utility_hover"],
-            border_color=STYLE["btn_utility_border"],
-            border_width=1,
-            text_color=STYLE["text_primary"],
-            command=self._browse_cache_folder
-        )
-        self.btn_browse_cache.pack(side="right", padx=2)
-
-        self.btn_open_cache = ctk.CTkButton(
-            row_cache, text="Open Cache", width=85, height=28,
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=11, weight="bold"), 
-            fg_color=STYLE["btn_utility_fg"], 
-            hover_color=STYLE["btn_utility_hover"],
-            border_color=STYLE["btn_utility_border"],
-            border_width=1,
-            text_color=STYLE["text_primary"],
-            command=self._open_cache_folder
-        )
-        self.btn_open_cache.pack(side="right", padx=2)
-        
-        from src.services.media_asset_manager import MediaAssetManager
-        default_cache = MediaAssetManager().cache_dir
-
-        self.cache_path_entry = ctk.CTkEntry(
-            row_cache,
-            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
-            height=28
-        )
-        self.cache_path_entry.insert(0, default_cache)
-        self.cache_path_entry.pack(side="left", fill="x", expand=True, padx=5)
-        self.cache_path_entry.bind("<KeyRelease>", self._on_cache_entry_changed)
 
         # Segmented Tab Controller
         self.tab_frame = ctk.CTkFrame(self.right_pane, fg_color="transparent", height=35)
@@ -1298,11 +1267,105 @@ class App(BaseClass): # type: ignore
         else:
             self._set_status("Cache folder does not exist!", "orange")
 
-    def _on_cache_entry_changed(self, event=None):
-        new_path = self.cache_path_entry.get().strip()
-        if new_path:
-            from src.services.media_asset_manager import MediaAssetManager
-            MediaAssetManager().cache_dir = new_path
+    def _open_settings_dialog(self):
+        from src.services.media_asset_manager import MediaAssetManager
+        asset_mgr = MediaAssetManager()
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Media Cache & App Settings")
+        dialog.geometry("540x250")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Center modal relative to app main window
+        try:
+            dialog.update_idletasks()
+            x = self.winfo_x() + (self.winfo_width() - 540) // 2
+            y = self.winfo_y() + (self.winfo_height() - 250) // 2
+            dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        except Exception:
+            pass
+
+        title_lbl = ctk.CTkLabel(
+            dialog, text="📁 Media Cache Directory Settings",
+            font=ctk.CTkFont(family=STYLE["font_family_title"], size=15, weight="bold"),
+            text_color=STYLE["text_primary"]
+        )
+        title_lbl.pack(padx=20, pady=(20, 5), anchor="w")
+
+        desc_lbl = ctk.CTkLabel(
+            dialog, text="Set local storage folder for extracted document images and preview media cache.",
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            text_color=STYLE["text_muted"]
+        )
+        desc_lbl.pack(padx=20, pady=(0, 15), anchor="w")
+
+        cache_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        cache_frame.pack(fill="x", padx=20, pady=5)
+
+        entry_cache = ctk.CTkEntry(
+            cache_frame,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12),
+            height=32
+        )
+        entry_cache.insert(0, asset_mgr.cache_dir)
+        entry_cache.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        def browse_cache():
+            path = filedialog.askdirectory(parent=dialog, initialdir=asset_mgr.cache_dir, title="Select Cache Folder")
+            if path:
+                entry_cache.delete(0, "end")
+                entry_cache.insert(0, path)
+                asset_mgr.cache_dir = path
+
+        btn_browse = ctk.CTkButton(
+            cache_frame, text="Browse", width=80, height=32,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            fg_color=STYLE["btn_utility_fg"], hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"], border_width=1,
+            text_color=STYLE["text_primary"], command=browse_cache
+        )
+        btn_browse.pack(side="right")
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(25, 15))
+
+        def open_folder():
+            path = asset_mgr.get_session_dir()
+            if not os.path.exists(path):
+                path = asset_mgr.cache_dir
+            if os.path.exists(path):
+                try:
+                    if os.name == 'nt':
+                        os.startfile(path)
+                    elif sys.platform == 'darwin':
+                        subprocess.Popen(['open', path])
+                    else:
+                        subprocess.Popen(['xdg-open', path])
+                except Exception as e:
+                    self._set_status(f"Failed to open cache: {e}", "red")
+
+        btn_open = ctk.CTkButton(
+            btn_frame, text="Open Cache Folder", width=140, height=32,
+            fg_color=STYLE["btn_utility_fg"], hover_color=STYLE["btn_utility_hover"],
+            border_color=STYLE["btn_utility_border"], border_width=1,
+            text_color=STYLE["text_primary"], command=open_folder
+        )
+        btn_open.pack(side="left")
+
+        def save_and_close():
+            new_path = entry_cache.get().strip()
+            if new_path:
+                asset_mgr.cache_dir = new_path
+            dialog.destroy()
+
+        btn_close = ctk.CTkButton(
+            btn_frame, text="Done", width=90, height=32,
+            font=ctk.CTkFont(family=STYLE["font_family_body"], size=12, weight="bold"),
+            command=save_and_close
+        )
+        btn_close.pack(side="right")
 
     # ── Execute Document Generation & Export ─────────────────────────────────
 

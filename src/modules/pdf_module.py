@@ -382,8 +382,38 @@ class PDFModule(BaseDocumentModule):
         """Converts Markdown text to formatted PDF document using markdown-pdf."""
         import re
         try:
+            from src.services.media_asset_manager import MediaAssetManager
+            asset_mgr = MediaAssetManager()
+
+            # Pre-process Markdown: resolve image paths (@media/ or relative) to absolute disk paths for PDF export
+            def resolve_img_path(match):
+                alt = match.group(1)
+                src = match.group(2)
+                resolved = asset_mgr.resolve_uri(src)
+                if not os.path.isabs(resolved) and not resolved.startswith("http"):
+                    sess_path = os.path.join(asset_mgr.get_session_dir(), resolved)
+                    if os.path.exists(sess_path):
+                        resolved = sess_path
+                resolved = os.path.normpath(os.path.abspath(resolved)).replace("\\", "/")
+                return f"![{alt}]({resolved})"
+
+            def resolve_html_img(match):
+                prefix = match.group(1)
+                src = match.group(2)
+                suffix = match.group(3)
+                resolved = asset_mgr.resolve_uri(src)
+                if not os.path.isabs(resolved) and not resolved.startswith("http"):
+                    sess_path = os.path.join(asset_mgr.get_session_dir(), resolved)
+                    if os.path.exists(sess_path):
+                        resolved = sess_path
+                resolved = os.path.normpath(os.path.abspath(resolved)).replace("\\", "/")
+                return f'{prefix}src="{resolved}"{suffix}'
+
+            processed_md = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', resolve_img_path, markdown_content)
+            processed_md = re.sub(r'(<img\s+[^>]*?src=["\'])([^"\']+)(["\'][^>]*?>)', resolve_html_img, processed_md)
+
             # Pre-process Markdown: replace ~~text~~ with <del>text</del> for strikethrough support
-            html_content = re.sub(r"~~(.*?)~~", r"<del>\1</del>", markdown_content)
+            html_content = re.sub(r"~~(.*?)~~", r"<del>\1</del>", processed_md)
 
             from markdown_pdf import MarkdownPdf, Section
             
