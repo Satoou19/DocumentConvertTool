@@ -218,6 +218,7 @@ class App(BaseClass): # type: ignore
         self._toast_timer_id = None
         self._preview_timer = None
         self._cache_row_visible = False
+        self._current_widget_scale = 1.0
         
         self._block_update_dimensions = False
         
